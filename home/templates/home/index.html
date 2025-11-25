@@ -144,6 +144,39 @@
       <div class="sticky-top" style="top: 20px;">
         <div class="d-grid gap-4">
         
+          {% if is_authenticated %}
+          <!-- Coin Card -->
+          <div class="card text-center shadow-sm border-0 rounded-card">
+            <div class="card-body">
+              <h6 class="card-title text-muted"><i class="bi bi-coin me-1"></i>SỐ COIN HIỆN CÓ</h6>
+              <p class="card-text display-5 fw-bold text-primary" id="coinDisplay">
+                {{ user_coins|default:"0" }}
+              </p>
+              <a href="{% url 'wallet:index' %}" class="btn btn-sm btn-outline-primary rounded-btn">Lịch sử giao dịch</a>
+            </div>
+          </div>
+
+          <!-- Check-in Card -->
+          <div class="card text-center shadow-sm bg-success text-white border-0 rounded-card">
+            <form action="{% url 'wallet:checkin' %}" method="POST" class="mb-0">
+              {% csrf_token %}
+              <div class="card-body">
+                <h5 class="card-title"><i class="bi bi-calendar-check me-2"></i>Điểm danh hằng ngày</h5>
+                <p class="small" id="checkInMessage">
+                  {% if can_checkin %}
+                  Nhận ngay 10 coin khi điểm danh hôm nay!
+                  {% else %}
+                  Bạn đã điểm danh hôm nay.
+                  {% endif %}
+                </p>
+                <button type="submit" class="btn btn-light fw-bold rounded-btn" {% if not can_checkin %}disabled{% endif %}>
+                  {% if can_checkin %}<i class="bi bi-check-circle me-1"></i>Điểm danh ngay{% else %}<i class="bi bi-check-circle-fill me-1"></i>Đã điểm danh{% endif %}
+                </button>
+              </div>
+            </form>
+          </div>
+          {% endif %}
+        
           <!-- Quick Actions -->
           <div class="card shadow-sm border-0 rounded-card">
             <div class="card-header bg-primary text-white rounded-card-header">

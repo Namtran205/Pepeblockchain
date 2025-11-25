@@ -42,7 +42,10 @@ class Migration(migrations.Migration):
                 
                 first_name TEXT,
                 last_name TEXT,
-                avatar_path TEXT
+                avatar_path TEXT,
+                
+                coins INTEGER DEFAULT 0,
+                last_checkin DATE
             );
                           
             CREATE TABLE students (

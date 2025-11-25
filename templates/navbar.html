@@ -22,6 +22,17 @@
             <i class="bi bi-people me-1"></i>Hồ sơ
           </a>
         </li>
+
+        <li class="nav-item">
+          <a class="nav-link {% if request.resolver_match.app_name == 'wallet' and request.resolver_match.url_name == 'index' %}active{% endif %}" href="{% url 'wallet:index' %}">
+            <i class="bi bi-wallet2 me-1"></i>Ví Coin
+          </a>
+        </li>
+        <li class="nav-item">
+          <a class="nav-link {% if request.resolver_match.app_name == 'wallet' and request.resolver_match.url_name == 'referral' %}active{% endif %}" href="{% url 'wallet:referral' %}">
+            <i class="bi bi-wallet2 me-1"></i>Giới thiệu
+          </a>
+        </li>
       </ul>
 
       <form class="d-flex mx-3" role="search" method="GET" action="#">

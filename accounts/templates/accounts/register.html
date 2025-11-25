@@ -72,6 +72,10 @@
 
                 <form action="" method="POST">
                     {% csrf_token %}
+                    <!-- Preserve ref param so we can record referral on POST -->
+                    {% if request.GET.ref %}
+                    <input type="hidden" name="ref" value="{{ request.GET.ref }}">
+                    {% endif %}
 
                     <div class="mb-3">
                         <label for="username" class="form-label fw-semibold">Tên đăng nhập *</label>

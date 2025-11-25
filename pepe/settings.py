@@ -11,6 +11,8 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 from pathlib import Path
+import os
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -37,7 +39,10 @@ INSTALLED_APPS = [
     "forum",
     "home",
     "search",
-
+    "wallet",
+    
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
     "django.contrib.messages",
     "django.contrib.staticfiles"
 ]
@@ -46,6 +51,7 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -77,8 +83,13 @@ WSGI_APPLICATION = "pepe.wsgi.application"
 
 DATABASES = {
     "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "example.sqlite3",
+        # Default: sqlite for local dev. To use Postgres, set environment variables.
+        "ENGINE": os.environ.get('DJANGO_DB_ENGINE', 'django.db.backends.sqlite3'),
+        "NAME": os.environ.get('DJANGO_DB_NAME', str(BASE_DIR / 'example.sqlite3')),
+        "USER": os.environ.get('DJANGO_DB_USER', ''),
+        "PASSWORD": os.environ.get('DJANGO_DB_PASSWORD', ''),
+        "HOST": os.environ.get('DJANGO_DB_HOST', ''),
+        "PORT": os.environ.get('DJANGO_DB_PORT', ''),
     }
 }
 
@@ -131,3 +142,21 @@ DATA_UPLOAD_MAX_MEMORY_SIZE = FILE_UPLOAD_MAX_MEMORY_SIZE
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+# Cấu hình Blockchain
+HSCOIN_API_BASE_URL="https://hsc-w3oq.onrender.com/api" # URL mạng blockchain của bạn
+HSCOIN_API_KEY="2dbf580f5c634947ba4f29935570cc4d"
+# CHAIN_ID = 1337 # Thay bằng Chain ID mạng của bạn (thường 1337 hoặc xem trên web)
+HSCOIN_ADMIN_EMAIL="namhoangtran191@gmail.com"
+HSCOIN_ADMIN_PASSWORD=123456
+
+# Smart Contract Address (SimpleToken)
+HSCOIN_SIMPLE_TOKEN_ADDRESS=0x773d5787b8afcfd11aa04fdd73b792da4134ffce
+
+# Danh sách ví được phép gọi contract
+HSCOIN_ALLOWED_CALLERS=0xc839fb60d86b9838f5772c33dc1f77c67fd809e7,0x693d7eeac22122406e49df7a84a23382fa272748
+# VÍ 1 (ADMIN) - Dùng để Mint token cho user
+ADMIN_WALLET_ADDRESS = "0xc839fb60d86b9838f5772c33dc1f77c67fd809e7" 
+ADMIN_PRIVATE_KEY = "0dc35a6279ce936b5e123e028ac6ea8c715d68ca8a5aee2bfc8ac61b2d1b17d8"
+
+TOKEN_CONTRACT_ADDRESS = "0x39b86e79657fbccacf4437f119916d611ec21095"

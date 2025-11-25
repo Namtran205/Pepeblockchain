@@ -1,0 +1,140 @@
+{% extends 'base.html' %}
+
+{% block title %}Giới thiệu bạn bè{% endblock %}
+
+{% block style %}
+<style>
+    #qrcode { display: inline-block; }
+</style>
+{% endblock %}
+
+{% block main %}
+<div class="row g-4">
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <h2 class="h3 mb-3 border-bottom pb-3">Mời bạn bè, nhận thưởng Coin!</h2>
+                <p class="text-muted">Chia sẻ liên kết giới thiệu của bạn. Khi bạn bè của bạn đăng ký, cả hai sẽ nhận được phần thưởng là <strong class="text-primary">50 coin</strong>!</p>
+
+                <div class="mb-4">
+                    <label for="referralLink" class="form-label fw-bold">Liên kết giới thiệu của bạn:</label>
+                    <div class="input-group">
+                        <input type="text" class="form-control" id="referralLink" value="{{ referral_link }}" readonly>
+                        <button class="btn btn-outline-primary" type="button" id="copyBtn" onclick="copyLink()">
+                            <i class="bi bi-clipboard me-1"></i><span id="copyBtnText">Sao chép</span>
+                        </button>
+                    </div>
+                </div>
+
+                <div class="text-center mb-4">
+                    <h6 class="mb-2">Hoặc quét mã QR:</h6>
+                    <div id="qrcode"></div>
+                </div>
+
+                <h5 class="mb-3">Cách thức hoạt động</h5>
+                <div class="row text-center g-3">
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded h-100">
+                            <div class="fs-1 text-primary"><i class="bi bi-share-fill"></i></div>
+                            <h6 class="mt-2">1. Chia sẻ</h6>
+                            <p class="small text-muted mb-0">Chia sẻ liên kết hoặc mã giới thiệu của bạn.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded h-100">
+                            <div class="fs-1 text-success"><i class="bi bi-person-plus-fill"></i></div>
+                            <h6 class="mt-2">2. Bạn bè đăng ký</h6>
+                            <p class="small text-muted mb-0">Bạn bè của bạn sử dụng liên kết để tạo tài khoản.</p>
+                        </div>
+                    </div>
+                    <div class="col-md-4">
+                        <div class="p-3 bg-light rounded h-100">
+                            <div class="fs-1 text-warning"><i class="bi bi-gift-fill"></i></div>
+                            <h6 class="mt-2">3. Nhận thưởng</h6>
+                            <p class="small text-muted mb-0">Cả hai bạn đều nhận được 50 coin vào ví.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mt-4 text-center">
+                    <p class="fw-bold">Hoặc chia sẻ trực tiếp qua:</p>
+                    <a href="#" id="shareFacebook" target="_blank" class="btn btn-primary btn-lg mx-1" title="Chia sẻ lên Facebook"><i class="bi bi-facebook"></i></a>
+                    <a href="#" id="shareTwitter" target="_blank" class="btn btn-info btn-lg mx-1 text-white" title="Chia sẻ lên Twitter"><i class="bi bi-twitter-x"></i></a>
+                    <a href="#" id="shareWhatsApp" target="_blank" class="btn btn-success btn-lg mx-1" title="Chia sẻ qua WhatsApp"><i class="bi bi-whatsapp"></i></a>
+                    <a href="#" id="shareEmail" class="btn btn-secondary btn-lg mx-1" title="Chia sẻ qua Email"><i class="bi bi-envelope-fill"></i></a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="col-lg-4">
+        <div class="sticky-top" style="top: 20px;">
+            <div class="d-grid gap-4">
+                <div class="card shadow-sm">
+                    <div class="card-header"><h6 class="mb-0"><i class="bi bi-trophy-fill me-2"></i>Thành tích của bạn</h6></div>
+                    <div class="card-body text-center">
+                        <div class="row">
+                            <div class="col-6 border-end">
+                                <div class="h3 fw-bold text-primary">{{ referrals_made_count|default:"0" }}</div>
+                                <div class="small text-muted">Bạn bè đã mời</div>
+                            </div>
+                            <div class="col-6">
+                                <div class="h3 fw-bold text-success"><i class="bi bi-coin"></i> {{ coins_earned_from_referrals|default:"0" }}</div>
+                                <div class="small text-muted">Coin đã nhận</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card shadow-sm">
+                    <div class="card-header"><h6 class="mb-0"><i class="bi bi-list-stars me-2"></i>Lịch sử giới thiệu thành công</h6></div>
+                    <ul class="list-group list-group-flush">
+                        {% for referred_user in recent_referrals_list %}
+                        <li class="list-group-item d-flex justify-content-between align-items-center">
+                            <span>{{ referred_user.username }}</span>
+                            <small class="text-muted">{{ referred_user.date_joined|timesince }} trước</small>
+                        </li>
+                        {% empty %}
+                        <li class="list-group-item text-muted text-center small">Chưa có ai đăng ký qua link của bạn.</li>
+                        {% endfor %}
+                        {% if referrals_made_count > 5 %}
+                        <li class="list-group-item text-center"><a href="#" class="small">Xem tất cả</a></li>
+                        {% endif %}
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block script %}
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+<script>
+function copyLink() {
+    const linkInput = document.getElementById('referralLink');
+    const copyBtnText = document.getElementById('copyBtnText');
+    navigator.clipboard.writeText(linkInput.value).then(() => {
+        copyBtnText.textContent = 'Đã sao chép!';
+        setTimeout(() => copyBtnText.textContent = 'Sao chép', 2000);
+    }).catch(err => console.error('Could not copy text:', err));
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+    const referralLinkInput = document.getElementById('referralLink');
+    const referralLink = referralLinkInput ? referralLinkInput.value : '';
+    const qrEl = document.getElementById('qrcode');
+    if (referralLink && qrEl) {
+        new QRCode(qrEl, { text: referralLink, width: 128, height: 128 });
+    }
+
+    if (referralLink) {
+        const shareText = encodeURIComponent('Tham gia PEPE - Nền tảng học tập tuyệt vời! Đăng ký qua link giới thiệu của mình nhé: ');
+        document.getElementById('shareFacebook').href = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(referralLink)}`;
+        document.getElementById('shareTwitter').href = `https://twitter.com/intent/tweet?url=${encodeURIComponent(referralLink)}&text=${shareText}`;
+        document.getElementById('shareWhatsApp').href = `https://wa.me/?text=${shareText}${encodeURIComponent(referralLink)}`;
+        document.getElementById('shareEmail').href = `mailto:?subject=${encodeURIComponent('Lời mời tham gia PEPE')}&body=${shareText}${encodeURIComponent(referralLink)}`;
+    }
+});
+</script>
+{% endblock %}

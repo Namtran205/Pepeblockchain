@@ -7,6 +7,9 @@ from datetime import datetime
 from django.conf import settings
 from django.contrib import messages
 from django.db import connection
+from django.db.models import F, Sum
+from django.utils import timezone
+from .models import Post, Comment, Vote, Subject, Question, MultipleChoiceOption, MultipleChoiceQuestion, EssayQuestion, TestQuestion, Submission, Test, Answer, MultipleChoiceAnswer, EssayAnswer
 from django.http import Http404
 from django.shortcuts import render, redirect
 
@@ -53,6 +56,16 @@ def create_post(request):
         return redirect('accounts:login')
     
     user_id = request.session['user_id']
+    # Ensure user exists in DB (avoid FK error if session is stale)
+    try:
+        user_id = int(user_id)
+    except Exception:
+        messages.error(request, 'Phiên đăng nhập không hợp lệ, vui lòng đăng nhập lại')
+        return redirect('accounts:login')
+
+    if not accounts.sql.one_user(user_id=user_id):
+        messages.error(request, 'Tài khoản không tồn tại, vui lòng đăng nhập lại')
+        return redirect('accounts:login')
     subject_id = request.GET.get('subject_id')
     subjects = accounts.sql.all_subject()
     
@@ -195,43 +208,30 @@ def edit_post(request, post_id):
         return redirect('accounts:login')
     
     user_id = request.session['user_id']
-    
-    # Kiểm tra quyền sở hữu bài viết
-    with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT 
-                p.id, p.title, p.content, p.subject_id, 
-                p.attachment_path, p.author_id,
-                s.name as subject_name
-            FROM posts p
-            LEFT JOIN subjects s ON p.subject_id = s.id
-            WHERE p.id = %s
-        """, [post_id])
-        
-        row = cursor.fetchone()
-        if not row:
-            raise Http404("Bài viết không tồn tại")
-        
-        if row[5] != user_id:  # author_id
-            messages.error(request, 'Bạn không có quyền chỉnh sửa bài viết này')
-            return redirect('forum:post_detail', post_id=post_id)
-        
-        post = {
-            'id': row[0],
-            'title': row[1],
-            'content': row[2],
-            'subject_id': row[3],
-            'attachment_path': row[4],
-            'author_id': row[5],
-            'subject': {
-                'id': row[3],
-                'name': row[6]
-            }
+
+    try:
+        post_obj = Post.objects.select_related('subject', 'author').get(pk=post_id)
+    except Post.DoesNotExist:
+        raise Http404("Bài viết không tồn tại")
+
+    if not post_obj.author or post_obj.author.id != user_id:
+        messages.error(request, 'Bạn không có quyền chỉnh sửa bài viết này')
+        return redirect('forum:post_detail', post_id=post_id)
+
+    post = {
+        'id': post_obj.id,
+        'title': post_obj.title,
+        'content': post_obj.content,
+        'subject_id': post_obj.subject.id if post_obj.subject else None,
+        'attachment_path': post_obj.attachment_path,
+        'author_id': post_obj.author.id if post_obj.author else None,
+        'subject': {
+            'id': post_obj.subject.id if post_obj.subject else None,
+            'name': post_obj.subject.name if post_obj.subject else None
         }
-        
-        # SELECT * subjects
-        cursor.execute("SELECT id, name FROM subjects ORDER BY name")
-        subjects = [{'id': row[0], 'name': row[1]} for row in cursor.fetchall()]
+    }
+
+    subjects = list(Subject.objects.order_by('name').values('id', 'name'))
     
     if request.method != 'POST':
         context = {
@@ -310,16 +310,20 @@ def edit_post(request, post_id):
             return redirect('forum:edit_post', post_id=post_id)
     
     try:
-        with connection.cursor() as cursor:
-            cursor.execute("""
-                UPDATE posts 
-                SET title = %s, content = %s, subject_id = %s, attachment_path = %s, updated_at = (datetime('now', 'localtime'))
-                WHERE id = %s
-            """, [title, content, subject_id, attachment_path, post_id])
-        
+        # update with ORM
+        post_obj.title = title
+        post_obj.content = content
+        if subject_id:
+            try:
+                post_obj.subject = Subject.objects.get(pk=subject_id)
+            except Subject.DoesNotExist:
+                post_obj.subject = None
+        post_obj.attachment_path = attachment_path
+        post_obj.updated_at = timezone.now()
+        post_obj.save()
+
         messages.success(request, 'Bài viết đã được cập nhật!')
         return redirect('forum:post_detail', post_id=post_id)
-        
     except Exception as e:
         messages.error(request, f'Có lỗi xảy ra: {str(e)}')
         return redirect('forum:edit_post', post_id=post_id)
@@ -333,199 +337,128 @@ def delete_post(request, post_id):
         return redirect('accounts:login')
     
     user_id = request.session['user_id']
-    
-    with connection.cursor() as cursor:
-        # Kiểm tra quyền sở hữu
-        cursor.execute("""
-            SELECT author_id, attachment_path, subject_id
-            FROM posts 
-            WHERE id = %s
-        """, [post_id])
-        
-        row = cursor.fetchone()
-        if not row:
-            raise Http404("Bài viết không tồn tại")
-        
-        if row[0] != user_id:
-            messages.error(request, 'Bạn không có quyền xóa bài viết này')
-            return redirect('forum:post_detail', post_id=post_id)
-        
-        attachment_path = row[1]
-        subject_id = row[2]
-        
-        # Xóa file đính kèm nếu có
-        if attachment_path:
-            try:
-                file_path = os.path.join(settings.MEDIA_ROOT, attachment_path)
+    try:
+        post_obj = Post.objects.select_related('subject', 'author').get(pk=post_id)
+    except Post.DoesNotExist:
+        raise Http404("Bài viết không tồn tại")
+
+    if not post_obj.author or post_obj.author.id != user_id:
+        messages.error(request, 'Bạn không có quyền xóa bài viết này')
+        return redirect('forum:post_detail', post_id=post_id)
+
+    attachment_path = post_obj.attachment_path
+    subject_id = post_obj.subject.id if post_obj.subject else None
+
+    if attachment_path:
+        try:
+            file_path = os.path.join(settings.MEDIA_ROOT, attachment_path)
+            if os.path.exists(file_path):
                 os.remove(file_path)
-            except:
-                pass
-        
-        # Xóa bài viết
-        cursor.execute("DELETE FROM posts WHERE id = %s", [post_id])
-    
+        except:
+            pass
+
+    post_obj.delete()
+
     messages.success(request, 'Bài viết đã được xóa')
     return redirect('forum:subject_detail', subject_id=subject_id)
 
 
 def post_detail(request, post_id):
     """Chi tiết bài viết"""
-    
-    with connection.cursor() as cursor:
-        # Lấy thông tin bài viết với comment_count và vote_value
-        cursor.execute("""
-            SELECT 
-                p.id, p.title, p.content, p.view_count,
-                p.created_at, p.updated_at, p.attachment_path,
-                p.subject_id, s.name as subject_name,
-                p.author_id, u.username, u.first_name, u.last_name, u.avatar_path,
-                (SELECT COUNT(*) FROM comments WHERE post_id = p.id) as comment_count,
-                (SELECT COALESCE(SUM(vote_value), 0) FROM votes WHERE post_id = p.id) as vote_value
-            FROM posts p
-            JOIN subjects s ON p.subject_id = s.id
-            JOIN users u ON p.author_id = u.id
-            WHERE p.id = %s
-        """, [post_id])
-        
-        row = cursor.fetchone()
-        if not row:
-            raise Http404("Bài viết không tồn tại")
-        
-        # Lấy extension và filename từ attachment_path
-        attachment_path = row[6]
-        file_extension = ''
-        filename = ''
-        file_size = 0
-        
-        if attachment_path:
-            filename = os.path.basename(attachment_path)
-            file_extension = filename.split('.')[-1].lower() if '.' in filename else ''
-            parts = filename.split(' ', 1)
-            filename = parts[1] if len(parts) > 1 else ''
-            # Lấy kích thước file
-            try:
-                full_path = os.path.join(settings.MEDIA_ROOT, attachment_path)
-                file_size = os.path.getsize(full_path)
-            except:
-                file_size = 0
-        
-        post = {
-            'id': row[0],
-            'title': row[1],
-            'content': row[2],
-            'view_count': row[3],
-            'created_at': row[4],
-            'updated_at': row[5],
-            'attachment': {
-                'url': f"{settings.MEDIA_URL}/{attachment_path}" if attachment_path else None,
-                'size': file_size
-            } if attachment_path else None,
-            'filename': filename,
-            'file_extension': file_extension,
-            'subject': {
-                'id': row[7],
-                'name': row[8]
-            },
-            'author': {
-                'id': row[9],
-                'username': row[10],
-                'first_name': row[11],
-                'last_name': row[12],
-                'avatar_path': row[13],
-                'get_full_name': f"{row[11]} {row[12]}".strip() or row[10]
-            },
-            'comment_count': row[14],
-            'vote_value': row[15]
+    try:
+        p = Post.objects.select_related('subject', 'author').get(pk=post_id)
+    except Post.DoesNotExist:
+        raise Http404("Bài viết không tồn tại")
+
+    # attachment info
+    attachment_path = p.attachment_path
+    file_extension = ''
+    filename = ''
+    file_size = 0
+    if attachment_path:
+        filename = os.path.basename(attachment_path)
+        file_extension = filename.split('.')[-1].lower() if '.' in filename else ''
+        parts = filename.split(' ', 1)
+        filename = parts[1] if len(parts) > 1 else ''
+        try:
+            full_path = os.path.join(settings.MEDIA_ROOT, attachment_path)
+            file_size = os.path.getsize(full_path)
+        except:
+            file_size = 0
+
+    # comment count and vote value
+    comment_count = Comment.objects.filter(post_id=post_id).count()
+    vote_value = Vote.objects.filter(post_id=post_id).aggregate(total=Sum('vote_value'))['total'] or 0
+
+    post = {
+        'id': p.id,
+        'title': p.title,
+        'content': p.content,
+        'view_count': p.view_count,
+        'created_at': p.created_at,
+        'updated_at': p.updated_at,
+        'attachment': {
+            'url': f"{settings.MEDIA_URL}/{attachment_path}" if attachment_path else None,
+            'size': file_size
+        } if attachment_path else None,
+        'filename': filename,
+        'file_extension': file_extension,
+        'subject': {
+            'id': p.subject.id if p.subject else None,
+            'name': p.subject.name if p.subject else None
+        },
+        'author': {
+            'id': p.author.id if p.author else None,
+            'username': p.author.username if p.author else None,
+            'first_name': getattr(p.author, 'first_name', None),
+            'last_name': getattr(p.author, 'last_name', None),
+            'avatar_path': getattr(p.author, 'avatar_path', None),
+            'get_full_name': f"{getattr(p.author, 'first_name', '')} {getattr(p.author, 'last_name', '')}".strip() or (p.author.username if p.author else '')
+        },
+        'comment_count': comment_count,
+        'vote_value': vote_value
+    }
+
+    # comments
+    comments_qs = Comment.objects.filter(post_id=post_id).select_related('author').order_by('created_at')
+    comments = [
+        {
+            'id': c.id,
+            'content': c.content,
+            'created_at': c.created_at,
+            'commenter': {
+                'id': c.author.id if c.author else None,
+                'username': c.author.username if c.author else None,
+                'first_name': getattr(c.author, 'first_name', None),
+                'last_name': getattr(c.author, 'last_name', None),
+                'avatar_path': getattr(c.author, 'avatar_path', None),
+                'get_full_name': f"{getattr(c.author, 'first_name', '')} {getattr(c.author, 'last_name', '')}".strip() if c.author else None
+            }
         }
-        
-        # Lấy vote của post
-        cursor.execute("""
-            SELECT COALESCE(SUM(vote_value), 0) as vote_value
-            FROM votes
-            WHERE post_id = %s
-        """, [post_id])
-        post['vote_value'] = cursor.fetchone()[0]
+        for c in comments_qs
+    ]
 
+    # increment view count
+    Post.objects.filter(pk=post_id).update(view_count=F('view_count') + 1)
+    post['view_count'] += 1
 
-        # Lấy danh sách comments
-        cursor.execute("""
-            SELECT 
-                c.id,
-                c.content,
-                c.created_at,
-                c.commenter_id,
-                u.username,
-                u.first_name,
-                u.last_name,
-                u.avatar_path
-            FROM comments c
-            LEFT JOIN users u ON c.commenter_id = u.id
-            WHERE c.post_id = %s
-            ORDER BY c.created_at ASC
-        """, [post_id])
-        
-        comments = [
-            {
-                'id': row[0],
-                'content': row[1],
-                'created_at': row[2],
-                'commenter': {
-                    'id': row[3],
-                    'username': row[4],
-                    'first_name': row[5],
-                    'last_name': row[6],
-                    'avatar_path': row[7],
-                    'get_full_name': f"{row[5]} {row[6]}".strip() if row[5] and row[6] else row[4]
-                }
+    # related posts
+    related_qs = Post.objects.filter(subject_id=post['subject']['id']).exclude(pk=post_id).select_related('author').order_by('-created_at')[:5]
+    related_posts = [
+        {
+            'id': r.id,
+            'title': r.title,
+            'view_count': r.view_count,
+            'created_at': r.created_at,
+            'author': {
+                'username': r.author.username if r.author else None,
+                'get_full_name': f"{getattr(r.author, 'first_name', '')} {getattr(r.author, 'last_name', '')}".strip() or (r.author.username if r.author else None)
             }
-            for row in cursor.fetchall()
-        ]
+        }
+        for r in related_qs
+    ]
 
-        # Tăng số lượt xem
-        cursor.execute("""
-            UPDATE posts 
-            SET view_count = view_count + 1 
-            WHERE id = %s
-        """, [post_id])
-        
-        post['view_count'] += 1
-        
-        # Lấy các bài viết liên quan
-        cursor.execute("""
-            SELECT 
-                p.id, 
-                p.title, 
-                p.view_count,
-                p.created_at,
-                u.username,
-                u.first_name,
-                u.last_name
-            FROM posts p
-            LEFT JOIN users u ON p.author_id = u.id
-            WHERE p.subject_id = %s AND p.id != %s
-            ORDER BY p.created_at DESC
-            LIMIT 5
-        """, [post['subject']['id'], post_id])
-        
-        related_posts = [
-            {
-                'id': row[0],
-                'title': row[1],
-                'view_count': row[2],
-                'created_at': row[3],
-                'author': {
-                    'username': row[4],
-                    'get_full_name': f"{row[5]} {row[6]}".strip() or row[4]
-                }
-            }
-            for row in cursor.fetchall()
-        ]
-        
-        # Đếm số bài viết của tác giả
-        cursor.execute("""
-            SELECT COUNT(*) FROM posts WHERE author_id = %s
-        """, [post['author']['id']])
-        author_post_count = cursor.fetchone()[0]
+    author_post_count = Post.objects.filter(author_id=post['author']['id']).count()
         
     context = {
         'is_authenticated': request.session.get('user_id') is not None,
@@ -562,19 +495,18 @@ def add_comment(request, post_id):
         return redirect('forum:post_detail', post_id=post_id)
     
     try:
-        with connection.cursor() as cursor:
-            # Kiểm tra post tồn tại
-            cursor.execute("SELECT id FROM posts WHERE id = %s", [post_id])
-            if not cursor.fetchone():
-                raise Http404("Bài viết không tồn tại")
-            
-            # Thêm comment
-            cursor.execute("""
-                INSERT INTO comments (content, commenter_id, post_id)
-                VALUES (%s, %s, %s)
-            """, [content, user_id, post_id])
-        
+        # ensure post exists
+        Post.objects.get(pk=post_id)
+        from accounts.models import User
+        commenter = None
+        try:
+            commenter = User.objects.get(pk=user_id)
+        except Exception:
+            commenter = None
+        Comment.objects.create(content=content, author=commenter, post_id=post_id)
         messages.success(request, 'Bình luận đã được đăng!')
+    except Post.DoesNotExist:
+        raise Http404("Bài viết không tồn tại")
     except Exception as e:
         messages.error(request, f'Có lỗi xảy ra: {str(e)}')
     
@@ -589,28 +521,17 @@ def delete_comment(request, comment_id):
         return redirect('accounts:login')
     
     user_id = request.session['user_id']
-    
-    with connection.cursor() as cursor:
-        # Kiểm tra quyền sở hữu
-        cursor.execute("""
-            SELECT commenter_id, post_id
-            FROM comments 
-            WHERE id = %s
-        """, [comment_id])
-        
-        row = cursor.fetchone()
-        if not row:
-            raise Http404("Bình luận không tồn tại")
-        
-        if row[0] != user_id:
-            messages.error(request, 'Bạn không có quyền xóa bình luận này')
-            return redirect('forum:post_detail', post_id=row[1])
-        
-        post_id = row[1]
-        
-        # Xóa comment
-        cursor.execute("DELETE FROM comments WHERE id = %s", [comment_id])
-    
+    try:
+        c = Comment.objects.get(pk=comment_id)
+    except Comment.DoesNotExist:
+        raise Http404("Bình luận không tồn tại")
+
+    if not c.author or c.author.id != user_id:
+        messages.error(request, 'Bạn không có quyền xóa bình luận này')
+        return redirect('forum:post_detail', post_id=c.post_id)
+
+    post_id = c.post_id
+    c.delete()
     messages.success(request, 'Bình luận đã được xóa')
     return redirect('forum:post_detail', post_id=post_id)
 
@@ -637,44 +558,30 @@ def vote_post(request, post_id):
         messages.error(request, 'Giá trị vote không hợp lệ')
         return redirect('forum:post_detail', post_id=post_id)
     
-    with connection.cursor() as cursor:
-        # Kiểm tra post tồn tại
-        cursor.execute("SELECT id FROM posts WHERE id = %s", [post_id])
-        if not cursor.fetchone():
-            raise Http404("Bài viết không tồn tại")
-        
-        # Kiểm tra user đã vote chưa
-        cursor.execute("""
-            SELECT vote_value FROM votes 
-            WHERE voter_id = %s AND post_id = %s
-        """, [user_id, post_id])
-        
-        existing_vote = cursor.fetchone()
-        
-        if existing_vote:
-            # Nếu đã vote
-            if existing_vote[0] == vote_value:
-                # Nếu vote giống nhau -> xóa vote (toggle)
-                cursor.execute("""
-                    DELETE FROM votes 
-                    WHERE voter_id = %s AND post_id = %s
-                """, [user_id, post_id])
-                messages.info(request, 'Đã hủy vote')
-            else:
-                # Nếu khác -> update vote
-                cursor.execute("""
-                    UPDATE votes
-                    SET vote_value = %s 
-                    WHERE voter_id = %s AND post_id = %s
-                """, [vote_value, user_id, post_id])
-                messages.success(request, 'Đã cập nhật vote')
+    try:
+        Post.objects.get(pk=post_id)
+    except Post.DoesNotExist:
+        raise Http404("Bài viết không tồn tại")
+
+    from accounts.models import User
+    voter = None
+    try:
+        voter = User.objects.get(pk=user_id)
+    except Exception:
+        voter = None
+
+    existing_vote = Vote.objects.filter(voter_id=user_id, post_id=post_id).first()
+    if existing_vote:
+        if existing_vote.vote_value == vote_value:
+            existing_vote.delete()
+            messages.info(request, 'Đã hủy vote')
         else:
-            # Chưa vote -> insert mới
-            cursor.execute("""
-                INSERT INTO votes (vote_value, voter_id, post_id)
-                VALUES (%s, %s, %s)
-            """, [vote_value, user_id, post_id])
-            messages.success(request, 'Đã vote thành công')
+            existing_vote.vote_value = vote_value
+            existing_vote.save()
+            messages.success(request, 'Đã cập nhật vote')
+    else:
+        Vote.objects.create(vote_value=vote_value, voter=voter, post_id=post_id)
+        messages.success(request, 'Đã vote thành công')
     
     
     return redirect('forum:post_detail', post_id=post_id)
@@ -713,83 +620,70 @@ def create_test(request, subject_id):
             return redirect('forum:create_test', subject_id=subject_id)
 
     try:
-        with connection.cursor() as cursor:
-            # Tạo bài kiểm tra
-            cursor.execute("""
-                INSERT INTO tests (title, description, time_limit, ends_at, max_attempts, subject_id, author_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, [title, description, time_limit, ends_at, max_attempts, subject_id, user_id])
-            
-            test_id = cursor.lastrowid
-            
-            # Xử lý các câu hỏi đã chọn
-            for i, question_data in enumerate(selected_questions):
-                try:
-                    question = json.loads(question_data)
-                    
-                    if question['source'] == 'new':
-                        # Tạo câu hỏi mới
-                        cursor.execute("""
-                            INSERT INTO questions (content, subject_id, author_id)
-                            VALUES (%s, %s, %s)
-                        """, [question['content'], subject_id, user_id])
-                        
-                        question_id = cursor.lastrowid
+        # Create test via ORM
+        author = None
+        from accounts.models import User
+        try:
+            author = User.objects.get(pk=user_id)
+        except Exception:
+            author = None
 
-                        if question['type'] == 'multiple_choice':
-                            # Tạo các options
-                            options = question.get('options', [])
-                            correct_answer_index = question.get('correct_answer_index', 0)
-                            correct_option_id = None
-                            
-                            # Tạo từng option và lưu ID
-                            for idx, option_content in enumerate(options):
-                                if option_content and option_content.strip():
-                                    cursor.execute("""
-                                        INSERT INTO multiple_choice_options (content, question_id)
-                                        VALUES (%s, %s)
-                                    """, [option_content.strip(), question_id])
-                                    
-                                    option_id = cursor.lastrowid
-                                    
-                                    # Lưu ID của đáp án đúng
-                                    if idx == correct_answer_index:
-                                        correct_option_id = option_id
-                            
-                            # Tạo multiple choice question với đáp án đúng
-                            if correct_option_id:
-                                randomize = 1 if question.get('randomize_options', False) else 0
-                                cursor.execute("""
-                                    INSERT INTO multiple_choice_questions (id, correct_option_id, randomize_options)
-                                    VALUES (%s, %s, %s)
-                                """, [question_id, correct_option_id, randomize])
-                            else:
-                                messages.warning(request, f'Câu hỏi "{question["content"][:50]}..." không có đáp án đúng hợp lệ')
-                                cursor.execute("DELETE FROM questions WHERE id = %s", [question_id])
-                                continue
-                        
-                        elif question['type'] == 'essay':
-                            cursor.execute("""
-                                INSERT INTO essay_questions (id, word_limit)
-                                VALUES (%s, %s)
-                            """, [question_id, question.get('word_limit', 0)])
-                    else:
-                        # Sử dụng câu hỏi có sẵn
-                        question_id = question['id']
-                    
-                    # Thêm câu hỏi vào bài kiểm tra
-                    cursor.execute("""
-                        INSERT INTO test_questions (test_id, question_id, question_order)
-                        VALUES (%s, %s, %s)
-                    """, [test_id, question_id, i])
-                    
-                except Exception as e:
-                    messages.warning(request, f'Có lỗi khi thêm câu hỏi: {str(e)}')
-                    continue
-        
+        subject = None
+        try:
+            subject = Subject.objects.get(pk=subject_id)
+        except Exception:
+            subject = None
+
+        t = Test.objects.create(
+            title=title,
+            description=description,
+            time_limit=time_limit or None,
+            ends_at=ends_at,
+            subject=subject,
+            author=author
+        )
+
+        # handle selected questions
+        for i, question_data in enumerate(selected_questions):
+            try:
+                question = json.loads(question_data)
+                if question.get('source') == 'new':
+                    q = Question.objects.create(
+                        content=question.get('content', ''),
+                        subject=subject,
+                        author=author
+                    )
+
+                    if question.get('type') == 'multiple_choice':
+                        options = question.get('options', [])
+                        correct_index = int(question.get('correct_answer_index', 0))
+                        correct_option = None
+                        for idx, opt in enumerate(options):
+                            if opt and opt.strip():
+                                opt_obj = MultipleChoiceOption.objects.create(content=opt.strip(), question=q)
+                                if idx == correct_index:
+                                    correct_option = opt_obj
+                        if not correct_option:
+                            messages.warning(request, f'Câu hỏi "{q.content[:50]}..." không có đáp án đúng hợp lệ')
+                            q.delete()
+                            continue
+                        MultipleChoiceQuestion.objects.create(id=q, correct_option=correct_option, randomize_options=bool(question.get('randomize_options', False)))
+
+                    elif question.get('type') == 'essay':
+                        EssayQuestion.objects.create(id=q, word_limit=int(question.get('word_limit', 0) or 0))
+                    question_obj = q
+                else:
+                    # existing question id
+                    question_obj = Question.objects.get(pk=question.get('id'))
+
+                TestQuestion.objects.create(test=t, question=question_obj, question_order=i)
+
+            except Exception as e:
+                messages.warning(request, f'Có lỗi khi thêm câu hỏi: {str(e)}')
+                continue
+
         messages.success(request, 'Tạo bài kiểm tra thành công')
-        return redirect('forum:test_detail', test_id=test_id)
-        
+        return redirect('forum:test_detail', test_id=t.id)
     except Exception as e:
         messages.error(request, f'Có lỗi xảy ra: {str(e)}')
         return redirect('forum:create_test', subject_id=subject_id)
@@ -800,47 +694,31 @@ def test_detail(request, test_id):
     if not request.session.get('user_id'):
         messages.warning(request, 'Vui lòng đăng nhập để tiếp tục')
         return redirect('accounts:login')
-    
-    with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT 
-                id, title, description, time_limit, ends_at, created_at,
-                max_attempts, subject_id, author_id,
-                CASE 
-                    WHEN ends_at IS NULL THEN 1
-                    WHEN datetime(ends_at) > datetime('now') THEN 1
-                    ELSE 0
-                END as is_active
-            FROM tests
-            WHERE id = %s
-        """, [test_id])
-        
-        row = cursor.fetchone()
-        if not row:
-            raise Http404("Bài kiểm tra không tồn tại")
-        
-        test = {
-            'id': row[0],
-            'title': row[1],
-            'description': row[2],
-            'time_limit': row[3],
-            'ends_at': row[4],
-            'created_at': row[5],
-            'max_attempts': row[6],
-            'subject_id': row[7],
-            'author_id': row[8],
-            'is_active': row[9]
-        }
-    
-        user_id = request.session.get('user_id')
-        if user_id:
-            cursor.execute("""
-                SELECT COUNT(*) FROM submissions 
-                WHERE test_id = %s AND author_id = %s
-            """, [test_id, user_id])
-            current_user_attempts = cursor.fetchone()[0]
-        else:
-            current_user_attempts = 0
+    try:
+        t = Test.objects.get(pk=test_id)
+    except Test.DoesNotExist:
+        raise Http404("Bài kiểm tra không tồn tại")
+
+    now = timezone.now()
+    is_active = (t.ends_at is None) or (t.ends_at > now)
+    test = {
+        'id': t.id,
+        'title': t.title,
+        'description': t.description,
+        'time_limit': t.time_limit,
+        'ends_at': t.ends_at,
+        'created_at': t.created_at,
+        'max_attempts': getattr(t, 'max_attempts', None),
+        'subject_id': t.subject.id if t.subject else None,
+        'author_id': t.author.id if t.author else None,
+        'is_active': is_active
+    }
+
+    user_id = request.session.get('user_id')
+    if user_id:
+        current_user_attempts = Submission.objects.filter(test_id=test_id, author_id=user_id).count()
+    else:
+        current_user_attempts = 0
 
     # Tính toán remaining attempts
     remaining_attempts = test['max_attempts'] - current_user_attempts
@@ -906,87 +784,76 @@ def create_question(request, subject_id):
         
         attachment_path = upload_path
     
-    try:
-        with connection.cursor() as cursor:
-            # Tạo câu hỏi
-            cursor.execute("""
-                INSERT INTO questions (content, attachment_path, subject_id, author_id)
-                VALUES (%s, %s, %s, %s)
-            """, [content, attachment_path, subject_id, user_id])
-            question_id = cursor.lastrowid
-            
+    # Create question via ORM
+        try:
+            from accounts.models import User
+            author = None
+            try:
+                author = User.objects.get(pk=user_id)
+            except Exception:
+                author = None
+
+            subject = None
+            try:
+                subject = Subject.objects.get(pk=subject_id)
+            except Exception:
+                subject = None
+
+            q = Question.objects.create(content=content, attachment_path=attachment_path, subject=subject, author=author)
+
             if question_type == 'multiple_choice':
-                # Lấy danh sách đáp án từ form (dạng JSON array)
                 options_json = request.POST.get('options_data')
-                
                 if not options_json:
                     messages.error(request, 'Vui lòng thêm đáp án')
-                    cursor.execute("DELETE FROM questions WHERE id = %s", [question_id])
+                    q.delete()
                     return redirect('forum:create_question', subject_id=subject_id)
-                
                 try:
                     options_data = json.loads(options_json)
-                except:
+                except Exception:
                     messages.error(request, 'Dữ liệu đáp án không hợp lệ')
-                    cursor.execute("DELETE FROM questions WHERE id = %s", [question_id])
+                    q.delete()
                     return redirect('forum:create_question', subject_id=subject_id)
-                
+
                 if len(options_data) < 2:
                     messages.error(request, 'Phải có ít nhất 2 đáp án')
-                    cursor.execute("DELETE FROM questions WHERE id = %s", [question_id])
+                    q.delete()
                     return redirect('forum:create_question', subject_id=subject_id)
-                
+
                 correct_index = int(request.POST.get('correct_answer_index', -1))
                 if correct_index < 0 or correct_index >= len(options_data):
                     messages.error(request, 'Vui lòng chọn đáp án đúng')
-                    cursor.execute("DELETE FROM questions WHERE id = %s", [question_id])
+                    q.delete()
                     return redirect('forum:create_question', subject_id=subject_id)
-                
-                # Tạo các options và lưu correct_option_id
-                correct_option_id = None
+
+                correct_option = None
                 for idx, option_text in enumerate(options_data):
                     if not option_text.strip():
                         continue
-                        
-                    cursor.execute("""
-                        INSERT INTO multiple_choice_options (content, question_id)
-                        VALUES (%s, %s)
-                    """, [option_text.strip(), question_id])
-                    
+                    opt = MultipleChoiceOption.objects.create(content=option_text.strip(), question=q)
                     if idx == correct_index:
-                        correct_option_id = cursor.lastrowid
-                
-                if not correct_option_id:
+                        correct_option = opt
+
+                if not correct_option:
                     messages.error(request, 'Đáp án đúng không hợp lệ')
-                    cursor.execute("DELETE FROM questions WHERE id = %s", [question_id])
+                    q.delete()
                     return redirect('forum:create_question', subject_id=subject_id)
-                
-                # Tạo multiple choice question
-                randomize_options = 1 if request.POST.get('randomize_options') else 0
-                cursor.execute("""
-                    INSERT INTO multiple_choice_questions (id, correct_option_id, randomize_options)
-                    VALUES (%s, %s, %s)
-                """, [question_id, correct_option_id, randomize_options])
-                
+
+                MultipleChoiceQuestion.objects.create(id=q, correct_option=correct_option, randomize_options=bool(request.POST.get('randomize_options')))
+
             elif question_type == 'essay':
                 word_limit = int(request.POST.get('word_limit', 0))
-                cursor.execute("""
-                    INSERT INTO essay_questions (id, word_limit)
-                    VALUES (%s, %s)
-                """, [question_id, word_limit])
-        
-        messages.success(request, 'Tạo câu hỏi thành công')
-        return redirect('forum:question_bank', subject_id=subject_id)
-        
-    except Exception as e:
-        # Xóa file nếu có lỗi
-        if attachment_path:
-            try:
-                os.remove(full_path)
-            except:
-                pass
-        messages.error(request, f'Có lỗi xảy ra: {str(e)}')
-        return redirect('forum:create_question', subject_id=subject_id)
+                EssayQuestion.objects.create(id=q, word_limit=word_limit)
+
+            messages.success(request, 'Tạo câu hỏi thành công')
+            return redirect('forum:question_bank', subject_id=subject_id)
+        except Exception as e:
+            if attachment_path:
+                try:
+                    os.remove(full_path)
+                except:
+                    pass
+            messages.error(request, f'Có lỗi xảy ra: {str(e)}')
+            return redirect('forum:create_question', subject_id=subject_id)
 
 
 def take_test(request, test_id):
@@ -998,40 +865,28 @@ def take_test(request, test_id):
     user_id = request.session['user_id']
     
     try:
-        with connection.cursor() as cursor:
-            # Kiểm tra test
-            cursor.execute("SELECT id, title, time_limit, max_attempts FROM tests WHERE id = %s", [test_id])
-            test_row = cursor.fetchone()
-            
-            if not test_row:
-                messages.error(request, 'Bài kiểm tra không tồn tại')
-                return redirect('forum:index')
-            
-            test_info = {
-                'id': test_row[0],
-                'title': test_row[1],
-                'time_limit': test_row[2] or 60,
-                'max_attempts': test_row[3] or 1
-            }
-            
-            # Kiểm tra số lần nộp
-            cursor.execute("""
-                SELECT COUNT(*) FROM submissions 
-                WHERE test_id = %s AND author_id = %s
-            """, [test_id, user_id])
-            attempt_count = cursor.fetchone()[0]
-            
-            if attempt_count >= test_info['max_attempts']:
-                messages.error(request, 'Bạn đã vượt quá số lần nộp bài cho phép')
-                return redirect('forum:test_detail', test_id=test_id)
-        
-        # POST - Nộp bài
+        try:
+            t = Test.objects.get(pk=test_id)
+        except Test.DoesNotExist:
+            messages.error(request, 'Bài kiểm tra không tồn tại')
+            return redirect('forum:index')
+
+        test_info = {
+            'id': t.id,
+            'title': t.title,
+            'time_limit': t.time_limit or 60,
+            'max_attempts': getattr(t, 'max_attempts', 1) or 1
+        }
+
+        attempt_count = Submission.objects.filter(test_id=test_id, author_id=user_id).count()
+        if attempt_count >= test_info['max_attempts']:
+            messages.error(request, 'Bạn đã vượt quá số lần nộp bài cho phép')
+            return redirect('forum:test_detail', test_id=test_id)
+
         if request.method == 'POST':
             return handle_test_submission(request, test_id, user_id, attempt_count)
-        
-        # GET - Hiển thị bài kiểm tra
+
         return display_test(request, test_id, user_id, attempt_count, test_info)
-    
     except Exception as e:
         messages.error(request, f'Có lỗi xảy ra: {str(e)}')
         return redirect('forum:index')
@@ -1040,76 +895,29 @@ def take_test(request, test_id):
 def handle_test_submission(request, test_id, user_id, attempt_count):
     """Xử lý nộp bài - chấm tự động trắc nghiệm"""
     try:
-        with connection.cursor() as cursor:
-            # Tạo submission
-            time_spent = int(request.POST.get('time_spent', 0))
-            cursor.execute("""
-                INSERT INTO submissions (test_id, author_id, attempt_number, time_spent)
-                VALUES (%s, %s, %s, %s)
-            """, [test_id, user_id, attempt_count + 1, time_spent])
-            submission_id = cursor.lastrowid
-            
-            # Lấy danh sách câu hỏi
-            cursor.execute("""
-                SELECT 
-                    tq.question_id,
-                    CASE 
-                        WHEN mcq.id IS NOT NULL THEN 'multiple_choice'
-                        WHEN eq.id IS NOT NULL THEN 'essay'
-                        ELSE 'unknown'
-                    END as question_type,
-                    mcq.correct_option_id
-                FROM test_questions tq
-                JOIN questions q ON tq.question_id = q.id
-                LEFT JOIN multiple_choice_questions mcq ON q.id = mcq.id
-                LEFT JOIN essay_questions eq ON q.id = eq.id
-                WHERE tq.test_id = %s
-                ORDER BY tq.question_order
-            """, [test_id])
-            
-            questions = cursor.fetchall()
-            
-            for question_id, question_type, correct_option_id in questions:
-                user_answer = request.POST.get(f'answer_{question_id}', '').strip()
-                
-                if question_type == 'multiple_choice' and user_answer:
-                    # user_answer giờ đã là option_id
+        time_spent = int(request.POST.get('time_spent', 0))
+        submission = Submission.objects.create(test_id=test_id, author_id=user_id, attempt_number=attempt_count + 1, time_spent=time_spent)
+
+        # iterate test questions
+        tqs = TestQuestion.objects.filter(test_id=test_id).select_related('question').order_by('question_order')
+        for tq in tqs:
+            q = tq.question
+            user_answer = request.POST.get(f'answer_{q.id}', '').strip()
+            if isinstance(q, Question) and user_answer:
+                if hasattr(q, 'multiplechoicequestion'):
                     try:
                         selected_option_id = int(user_answer)
                     except ValueError:
                         selected_option_id = None
-                    
                     if selected_option_id:
-                        # Tạo answer
-                        cursor.execute("""
-                            INSERT INTO answers (submission_id, question_id)
-                            VALUES (%s, %s)
-                        """, [submission_id, question_id])
-                        answer_id = cursor.lastrowid
-                        
-                        # Tạo multiple choice answer
-                        cursor.execute("""
-                            INSERT INTO multiple_choice_answers (id, selected_option_id)
-                            VALUES (%s, %s)
-                        """, [answer_id, selected_option_id])
-                        
-                elif question_type == 'essay' and user_answer:
-                    # Tạo answer
-                    cursor.execute("""
-                        INSERT INTO answers (submission_id, question_id)
-                        VALUES (%s, %s)
-                    """, [submission_id, question_id])
-                    answer_id = cursor.lastrowid
-                    
-                    # Tạo essay answer (chưa chấm)
-                    cursor.execute("""
-                        INSERT INTO essay_answers (id, content, is_corrected)
-                        VALUES (%s, %s, NULL)
-                    """, [answer_id, user_answer])
-        
+                        ans = Answer.objects.create(submission=submission, question=q)
+                        MultipleChoiceAnswer.objects.create(id=ans, selected_option_id=selected_option_id)
+                elif hasattr(q, 'essayquestion'):
+                    ans = Answer.objects.create(submission=submission, question=q)
+                    EssayAnswer.objects.create(id=ans, content=user_answer, is_corrected=None)
+
         messages.success(request, 'Nộp bài thành công!')
-        return redirect('forum:submission_detail', submission_id=submission_id)
-        
+        return redirect('forum:submission_detail', submission_id=submission.id)
     except Exception as e:
         messages.error(request, f'Có lỗi xảy ra: {str(e)}')
         return redirect('forum:take_test', test_id=test_id)
@@ -1117,67 +925,43 @@ def handle_test_submission(request, test_id, user_id, attempt_count):
 
 def display_test(request, test_id, user_id, attempt_count, test_info):
     """Hiển thị bài kiểm tra"""
-    with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT 
-                q.id, 
-                q.content,
-                CASE 
-                    WHEN mcq.id IS NOT NULL THEN 'multiple_choice'
-                    WHEN eq.id IS NOT NULL THEN 'essay'
-                    ELSE 'unknown'
-                END as question_type,
-                mcq.randomize_options,
-                eq.word_limit
-            FROM test_questions tq
-            JOIN questions q ON tq.question_id = q.id
-            LEFT JOIN multiple_choice_questions mcq ON q.id = mcq.id
-            LEFT JOIN essay_questions eq ON q.id = eq.id
-            WHERE tq.test_id = %s
-            ORDER BY tq.question_order
-        """, [test_id])
-        
-        questions = []
-        for row in cursor.fetchall():
-            question_id = row[0]
-            question_type = row[2]
-            
-            question_data = {
-                'id': question_id,
-                'content': row[1],
-                'type': question_type,
-                'options': {},
-                'randomize_options': row[3] or 0,
-                'word_limit': row[4] or 0
-            }
-            
-            # Nếu là multiple choice, lấy các options
-            if question_type == 'multiple_choice':
-                cursor.execute("""
-                    SELECT id, content
-                    FROM multiple_choice_options
-                    WHERE question_id = %s
-                    ORDER BY id
-                """, [question_id])
-                
-                options = {}
-                option_list = list(cursor.fetchall())
-                
-                # Xáo trộn nếu cần
-                if question_data['randomize_options']:
-                    import random
-                    random.shuffle(option_list)
-                
-                for idx, (opt_id, opt_content) in enumerate(option_list):
-                    label = chr(65 + idx)  # A, B, C, D...
-                    options[label] = {
-                        'id': opt_id,
-                        'content': opt_content
-                    }
-                
-                question_data['options'] = options
-            
-            questions.append(question_data)
+    # Use ORM to gather questions and types
+    tqs = TestQuestion.objects.filter(test_id=test_id).select_related('question').order_by('question_order')
+    questions = []
+    for tq in tqs:
+        q = tq.question
+        question_type = 'unknown'
+        randomize_options = False
+        word_limit = 0
+        if hasattr(q, 'multiplechoicequestion'):
+            question_type = 'multiple_choice'
+            randomize_options = getattr(q.multiplechoicequestion, 'randomize_options', False)
+        elif hasattr(q, 'essayquestion'):
+            question_type = 'essay'
+            word_limit = getattr(q.essayquestion, 'word_limit', 0)
+
+        question_data = {
+            'id': q.id,
+            'content': q.content,
+            'type': question_type,
+            'options': {},
+            'randomize_options': randomize_options,
+            'word_limit': word_limit
+        }
+
+        if question_type == 'multiple_choice':
+            opts = list(MultipleChoiceOption.objects.filter(question_id=q.id).order_by('id'))
+            option_list = [{'id': o.id, 'content': o.content} for o in opts]
+            if question_data['randomize_options']:
+                import random
+                random.shuffle(option_list)
+            options = {}
+            for idx, opt in enumerate(option_list):
+                label = chr(65 + idx)
+                options[label] = {'id': opt['id'], 'content': opt['content']}
+            question_data['options'] = options
+
+        questions.append(question_data)
     
     context = {
         'test': test_info,
@@ -1197,66 +981,56 @@ def question_bank(request, subject_id):
         messages.warning(request, 'Vui lòng đăng nhập để tiếp tục')
         return redirect('accounts:login')
     
-    with connection.cursor() as cursor:
-        cursor.execute("""
-            SELECT 
-                q.id, 
-                q.content, 
-                q.created_at,
-                q.attachment_path,
-                CASE 
-                    WHEN mcq.id IS NOT NULL THEN 'multiple_choice'
-                    WHEN eq.id IS NOT NULL THEN 'essay'
-                    ELSE 'unknown'
-                END as question_type,
-                mcq.correct_option_id,
-                mcq.randomize_options,
-                eq.word_limit
-            FROM questions q
-            LEFT JOIN multiple_choice_questions mcq ON q.id = mcq.id
-            LEFT JOIN essay_questions eq ON q.id = eq.id
-            WHERE q.subject_id = %s
-            ORDER BY q.created_at DESC
-        """, [subject_id])
-        
-        questions = []
-        for row in cursor.fetchall():
-            question_id = row[0]
-            question_type = row[4]
-            
-            question_data = {
-                'id': question_id,
-                'content': row[1],
-                'created_at': row[2],
-                'attachment_path': settings.MEDIA_URL + row[3] if row[3] else None,
-                'type': question_type,
-                'options': {},
-                'correct_option_id': row[5],
-                'randomize_options': row[6],
-                'word_limit': row[7] or 0
-            }
-            
-            # Nếu là multiple choice, lấy các options
-            if question_type == 'multiple_choice':
-                cursor.execute("""
-                    SELECT id, content
-                    FROM multiple_choice_options
-                    WHERE question_id = %s
-                    ORDER BY id
-                """, [question_id])
-                
-                options = {}
-                for idx, (opt_id, opt_content) in enumerate(cursor.fetchall()):
-                    label = chr(65 + idx)  # A, B, C, D...
-                    options[label] = {
-                        'id': opt_id,
-                        'content': opt_content,
-                        'is_correct': opt_id == row[5]  # correct_option_id
-                    }
-                
-                question_data['options'] = options
-            
-            questions.append(question_data)
+    qs = Question.objects.filter(subject_id=subject_id).order_by('-created_at')
+    questions = []
+    for qobj in qs:
+        # determine type
+        try:
+            mcq = MultipleChoiceQuestion.objects.filter(id=qobj.id).first()
+        except Exception:
+            mcq = None
+        try:
+            eq = EssayQuestion.objects.filter(id=qobj.id).first()
+        except Exception:
+            eq = None
+
+        if mcq:
+            qtype = 'multiple_choice'
+            correct_option_id = mcq.correct_option.id if getattr(mcq, 'correct_option', None) else None
+            randomize = mcq.randomize_options
+            word_limit = 0
+        elif eq:
+            qtype = 'essay'
+            correct_option_id = None
+            randomize = 0
+            word_limit = eq.word_limit
+        else:
+            qtype = 'unknown'
+            correct_option_id = None
+            randomize = 0
+            word_limit = 0
+
+        question_data = {
+            'id': qobj.id,
+            'content': qobj.content,
+            'created_at': qobj.created_at,
+            'attachment_path': settings.MEDIA_URL + qobj.attachment_path if qobj.attachment_path else None,
+            'type': qtype,
+            'options': {},
+            'correct_option_id': correct_option_id,
+            'randomize_options': randomize,
+            'word_limit': word_limit
+        }
+
+        if qtype == 'multiple_choice':
+            opts = MultipleChoiceOption.objects.filter(question_id=qobj.id).order_by('id')
+            options = {}
+            for idx, opt in enumerate(opts):
+                label = chr(65 + idx)
+                options[label] = {'id': opt.id, 'content': opt.content, 'is_correct': opt.id == correct_option_id}
+            question_data['options'] = options
+
+        questions.append(question_data)
     
     context = {
         'subject_id': subject_id,
@@ -1273,104 +1047,64 @@ def add_questions_to_test(request, test_id):
         messages.warning(request, 'Vui lòng đăng nhập để tiếp tục')
         return redirect('accounts:login')
     
-    with connection.cursor() as cursor:
-        cursor.execute("SELECT subject_id, title, author_id FROM tests WHERE id = %s", [test_id])
-        test_info = cursor.fetchone()
-        
-        if not test_info:
-            raise Http404("Bài kiểm tra không tồn tại")
-        
-        subject_id, test_title, author_id = test_info
-        
-        # Kiểm tra quyền tác giả
-        if author_id != request.session['user_id']:
-            messages.error(request, 'Bạn không có quyền chỉnh sửa bài kiểm tra này')
-            return redirect('forum:test_detail', test_id=test_id)
-        
-        # Lấy câu hỏi chưa có trong bài kiểm tra
-        cursor.execute("""
-            SELECT 
-                q.id, 
-                q.content,
-                CASE 
-                    WHEN mcq.id IS NOT NULL THEN 'multiple_choice'
-                    WHEN eq.id IS NOT NULL THEN 'essay'
-                    ELSE 'unknown'
-                END as question_type,
-                eq.word_limit,
-                u.username as author_name,
-                mcq.correct_option_id
-            FROM questions q
-            LEFT JOIN multiple_choice_questions mcq ON q.id = mcq.id
-            LEFT JOIN essay_questions eq ON q.id = eq.id
-            LEFT JOIN users u ON q.author_id = u.id
-            WHERE q.subject_id = %s
-            AND q.id NOT IN (
-                SELECT question_id FROM test_questions WHERE test_id = %s
-            )
-            ORDER BY q.created_at DESC
-        """, [subject_id, test_id])
-        
-        available_questions = []
-        for row in cursor.fetchall():
-            question_id = row[0]
-            question_type = row[2]
-            
-            question_data = {
-                'id': question_id,
-                'content': row[1],
-                'type': question_type,
-                'word_limit': row[3] or 0,
-                'author_name': row[4],
-                'options': {}
-            }
-            
-            # Nếu là multiple choice, lấy các options
-            if question_type == 'multiple_choice':
-                cursor.execute("""
-                    SELECT id, content
-                    FROM multiple_choice_options
-                    WHERE question_id = %s
-                    ORDER BY id
-                """, [question_id])
-                
-                options = {}
-                for idx, (opt_id, opt_content) in enumerate(cursor.fetchall()):
-                    label = chr(65 + idx)  # A, B, C, D...
-                    options[label] = {
-                        'id': opt_id,
-                        'content': opt_content,
-                        'is_correct': opt_id == row[5]  # correct_option_id
-                    }
-                
-                question_data['options'] = options
-            
-            available_questions.append(question_data)
+    try:
+        t = Test.objects.get(pk=test_id)
+    except Test.DoesNotExist:
+        raise Http404("Bài kiểm tra không tồn tại")
+
+    subject_id = t.subject.id if t.subject else None
+    test_title = t.title
+    author_id = t.author.id if t.author else None
+
+    if author_id != request.session['user_id']:
+        messages.error(request, 'Bạn không có quyền chỉnh sửa bài kiểm tra này')
+        return redirect('forum:test_detail', test_id=test_id)
+
+    # questions not yet in test
+    existing_q_ids = [q.question_id for q in TestQuestion.objects.filter(test_id=test_id)]
+    qs = Question.objects.filter(subject_id=subject_id).exclude(id__in=existing_q_ids).order_by('-created_at')
+    available_questions = []
+    for qobj in qs:
+        qtype = 'multiple_choice' if MultipleChoiceQuestion.objects.filter(id=qobj.id).exists() else ('essay' if EssayQuestion.objects.filter(id=qobj.id).exists() else 'unknown')
+        question_data = {
+            'id': qobj.id,
+            'content': qobj.content,
+            'type': qtype,
+            'word_limit': EssayQuestion.objects.filter(id=qobj.id).values_list('word_limit', flat=True).first() or 0,
+            'author_name': getattr(qobj.author, 'username', None) if hasattr(qobj, 'author') else None,
+            'options': {}
+        }
+        if qtype == 'multiple_choice':
+            correct_option_id = MultipleChoiceQuestion.objects.filter(id=qobj.id).values_list('correct_option_id', flat=True).first()
+            opts = MultipleChoiceOption.objects.filter(question_id=qobj.id).order_by('id')
+            options = {}
+            for idx, opt in enumerate(opts):
+                label = chr(65 + idx)
+                options[label] = {'id': opt.id, 'content': opt.content, 'is_correct': (opt.id == correct_option_id)}
+            question_data['options'] = options
+        available_questions.append(question_data)
     
     if request.method == 'POST':
         selected_questions = request.POST.getlist('question_ids')
-        
+
         if not selected_questions:
             messages.error(request, 'Vui lòng chọn ít nhất một câu hỏi')
             return redirect('forum:add_questions_to_test', test_id=test_id)
-        
+
         try:
-            with connection.cursor() as cursor:
-                cursor.execute("""
-                    SELECT COALESCE(MAX(question_order), -1) FROM test_questions 
-                    WHERE test_id = %s
-                """, [test_id])
-                max_order = cursor.fetchone()[0]
-                
-                for i, question_id in enumerate(selected_questions):
-                    cursor.execute("""
-                        INSERT INTO test_questions (test_id, question_id, question_order)
-                        VALUES (%s, %s, %s)
-                    """, [test_id, question_id, max_order + i + 1])
-            
+            # compute starting order
+            current_max = TestQuestion.objects.filter(test_id=test_id).aggregate(max_order=Sum('question_order'))
+            # If no entries, start -1 -> then +1 gives 0
+            max_order = -1
+            existing = TestQuestion.objects.filter(test_id=test_id).values_list('question_order', flat=True)
+            if existing:
+                max_order = max(existing)
+
+            for i, question_id in enumerate(selected_questions):
+                TestQuestion.objects.create(test_id=test_id, question_id=int(question_id), question_order=max_order + i + 1)
+
             messages.success(request, f'Đã thêm {len(selected_questions)} câu hỏi vào bài kiểm tra')
             return redirect('forum:test_detail', test_id=test_id)
-            
         except Exception as e:
             messages.error(request, f'Có lỗi xảy ra: {str(e)}')
             return redirect('forum:add_questions_to_test', test_id=test_id)
@@ -1392,76 +1126,44 @@ def submissions_history(request, test_id):
         return redirect('accounts:login')
     
     user_id = request.session['user_id']
-    
-    with connection.cursor() as cursor:
-        # Lấy thông tin test
-        cursor.execute("""
-            SELECT title FROM tests WHERE id = %s
-        """, [test_id])
-        test_row = cursor.fetchone()
-        if not test_row:
-            raise Http404("Bài kiểm tra không tồn tại")
-        test_title = test_row[0]
-        
-        # Nếu người dùng là author của bài kiểm tra, lấy tất cả submissions
-        cursor.execute("SELECT author_id FROM tests WHERE id = %s", [test_id])
-        is_test_author = (cursor.fetchone()[0] == user_id)
-        if is_test_author:
-            cursor.execute("""
-                SELECT id, created_at, time_spent, attempt_number, author_id
-                FROM submissions
-                WHERE test_id = %s
-                ORDER BY created_at DESC
-            """, [test_id])
+    # Use ORM to fetch test and submissions
+    try:
+        test = Test.objects.get(pk=test_id)
+    except Test.DoesNotExist:
+        raise Http404("Bài kiểm tra không tồn tại")
+    test_title = test.title
+    is_test_author = (test.author.id == user_id)
 
-        else:
-            # Chỉ lấy danh sách submissions của người dùng 
-            cursor.execute("""
-                SELECT id, created_at, time_spent, attempt_number
-                FROM submissions
-                WHERE test_id = %s AND author_id = %s
-                ORDER BY created_at DESC
-            """, [test_id, user_id])
-        
-        submissions = []
-        for row in cursor.fetchall():
-            submission_id = row[0]
-            
-            # True Hell  |
-            #           \|/
+    if is_test_author:
+        subs_qs = Submission.objects.filter(test_id=test_id).order_by('-created_at')
+    else:
+        subs_qs = Submission.objects.filter(test_id=test_id, author_id=user_id).order_by('-created_at')
 
-            # Tính điểm cho từng submission
-            cursor.execute("""
-                SELECT 
-                    COUNT(*) as total_questions,
-                    COALESCE(SUM(
-                        CASE 
-                            WHEN mcq.id IS NOT NULL AND mca.selected_option_id = mcq.correct_option_id THEN 1
-                            WHEN eq.id IS NOT NULL AND ea.is_corrected = 1 THEN 1
-                            ELSE 0
-                        END
-                    ), 0) as score
-                FROM answers a
-                INNER JOIN questions q ON a.question_id = q.id
-                LEFT JOIN multiple_choice_questions mcq ON q.id = mcq.id
-                LEFT JOIN essay_questions eq ON q.id = eq.id
-                LEFT JOIN multiple_choice_answers mca ON a.id = mca.id AND mcq.id IS NOT NULL
-                LEFT JOIN essay_answers ea ON a.id = ea.id AND eq.id IS NOT NULL
-                WHERE a.submission_id = %s
-            """, [submission_id])
-            
-            score_row = cursor.fetchone()
-            total_questions = score_row[0] or 0
-            total_score = score_row[1]
-            
-            submissions.append({
-                'id': submission_id,
-                'created_at': row[1],
-                'time_spent': row[2],
-                'attempt_number': row[3],
-                'total_score': int(total_score) if total_score is not None else None,
-                'max_score': total_questions
-            })
+    submissions = []
+    for s in subs_qs:
+        answers_qs = Answer.objects.filter(submission_id=s.id).select_related('question')
+        total_questions = answers_qs.count()
+        total_score = 0
+        for a in answers_qs:
+            qid = a.question_id
+            if MultipleChoiceQuestion.objects.filter(id=qid).exists():
+                mcq = MultipleChoiceQuestion.objects.get(id=qid)
+                sel = MultipleChoiceAnswer.objects.filter(id=a.id).values_list('selected_option_id', flat=True).first()
+                if sel is not None and mcq.correct_option_id == sel:
+                    total_score += 1
+            elif EssayQuestion.objects.filter(id=qid).exists():
+                is_corr = EssayAnswer.objects.filter(id=a.id).values_list('is_corrected', flat=True).first()
+                if is_corr:
+                    total_score += 1
+
+        submissions.append({
+            'id': s.id,
+            'created_at': s.created_at,
+            'time_spent': s.time_spent,
+            'attempt_number': s.attempt_number,
+            'total_score': int(total_score),
+            'max_score': total_questions
+        })
     
     context = {
         'is_authenticated': True,
@@ -1479,124 +1181,82 @@ def submission_detail(request, submission_id):
         messages.warning(request, 'Vui lòng đăng nhập để tiếp tục')
         return redirect('accounts:login')
     
-    with connection.cursor() as cursor:
-        # Lấy thông tin submission
-        cursor.execute("""
-            SELECT s.id, s.created_at, s.time_spent, s.attempt_number,
-                   s.test_id, s.author_id, t.title
-            FROM submissions s
-            JOIN tests t ON s.test_id = t.id
-            WHERE s.id = %s
-        """, [submission_id])
-        
-        submission_row = cursor.fetchone()
-        if not submission_row:
-            raise Http404("Bài nộp không tồn tại")
-        
-        # Lấy danh sách câu trả lời với thông tin chi tiết
-        cursor.execute("""
-            SELECT 
-                a.id,
-                q.id as question_id,
-                q.content as question_content,
-                CASE 
-                    WHEN mcq.id IS NOT NULL THEN 'multiple_choice'
-                    WHEN eq.id IS NOT NULL THEN 'essay'
-                    ELSE 'unknown'
-                END as question_type,
-                mcq.correct_option_id,
-                mca.selected_option_id,
-                ea.content as essay_content,
-                ea.is_corrected
-            FROM answers a
-            JOIN questions q ON a.question_id = q.id
-            LEFT JOIN multiple_choice_questions mcq ON q.id = mcq.id
-            LEFT JOIN essay_questions eq ON q.id = eq.id
-            LEFT JOIN multiple_choice_answers mca ON a.id = mca.id
-            LEFT JOIN essay_answers ea ON a.id = ea.id
-            WHERE a.submission_id = %s
-            ORDER BY a.id
-        """, [submission_id])
-        
-        answers = []
-        total_score = 0
-        total_questions = 0
-        
-        for row in cursor.fetchall():
-            question_type = row[3]
-            score = None
-            answer_content = ''
-            is_correct = False
-            correct_answer_text = ''
-            user_answer_text = ''
-            
-            if question_type == 'multiple_choice':
-                correct_option_id = row[4]
-                selected_option_id = row[5]
-                
-                # Lấy text của đáp án
-                cursor.execute("""
-                    SELECT id, content
-                    FROM multiple_choice_options
-                    WHERE question_id = %s
-                    ORDER BY id
-                """, [row[1]])
-                
-                options = list(cursor.fetchall())
-                for idx, (opt_id, opt_content) in enumerate(options):
-                    label = chr(65 + idx)
-                    if opt_id == selected_option_id:
-                        user_answer_text = f"{label}. {opt_content}"
-                    if opt_id == correct_option_id:
-                        correct_answer_text = f"{label}. {opt_content}"
-                
-                # Chấm điểm
-                is_correct = (selected_option_id == correct_option_id)
-                score = 1 if is_correct else 0
-                answer_content = user_answer_text
+    try:
+        submission = Submission.objects.select_related('test').get(pk=submission_id)
+    except Submission.DoesNotExist:
+        raise Http404("Bài nộp không tồn tại")
+
+    answers_qs = Answer.objects.filter(submission_id=submission_id).select_related('question').order_by('id')
+    answers = []
+    total_score = 0
+    total_questions = 0
+
+    for a in answers_qs:
+        q = a.question
+        question_type = 'unknown'
+        score = None
+        answer_content = ''
+        is_correct = False
+        correct_answer_text = ''
+
+        if MultipleChoiceQuestion.objects.filter(id=q.id).exists():
+            question_type = 'multiple_choice'
+            mcq = MultipleChoiceQuestion.objects.get(id=q.id)
+            selected_option_id = MultipleChoiceAnswer.objects.filter(id=a.id).values_list('selected_option_id', flat=True).first()
+
+            opts = MultipleChoiceOption.objects.filter(question_id=q.id).order_by('id')
+            for idx, opt in enumerate(opts):
+                label = chr(65 + idx)
+                if opt.id == selected_option_id:
+                    user_answer_text = f"{label}. {opt.content}"
+                if getattr(mcq, 'correct_option_id', None) == opt.id:
+                    correct_answer_text = f"{label}. {opt.content}"
+
+            is_correct = (selected_option_id == getattr(mcq, 'correct_option_id', None))
+            score = 1 if is_correct else 0
+            answer_content = user_answer_text if 'user_answer_text' in locals() else ''
+            total_score += score
+            total_questions += 1
+
+        elif EssayQuestion.objects.filter(id=q.id).exists():
+            question_type = 'essay'
+            ea = EssayAnswer.objects.filter(id=a.id).first()
+            answer_content = ea.content if ea else ''
+            is_corrected = ea.is_corrected if ea else None
+            if is_corrected is not None:
+                score = 1 if is_corrected else 0
                 total_score += score
                 total_questions += 1
-                
-            elif question_type == 'essay':
-                answer_content = row[6] or ''
-                is_corrected = row[7]
-                
-                if is_corrected is not None:
-                    score = 1 if is_corrected == 1 else 0
-                    total_score += score
-                    total_questions += 1
-                else:
-                    score = None  # Chưa chấm
-                    total_questions += 1
-            
-            answers.append({
-                'id': row[0],
-                'question_id': row[1],
-                'question_content': row[2],
-                'question_type': question_type,
-                'answer_content': answer_content,
-                'score': score,
-                'is_correct': is_correct,
-                'correct_answer': correct_answer_text,
-                'is_corrected': row[7] if question_type == 'essay' else True
-            })
-    
-        # Kiểm tra xem người xem có phải là tác giả bài kiểm tra không
-        cursor.execute("SELECT author_id FROM tests WHERE id = %s", [submission_row[4]])
-        is_test_author = (cursor.fetchone()[0] == request.session['user_id'])
+            else:
+                score = None
+                total_questions += 1
+
+        answers.append({
+            'id': a.id,
+            'question_id': q.id,
+            'question_content': q.content,
+            'question_type': question_type,
+            'answer_content': answer_content,
+            'score': score,
+            'is_correct': is_correct,
+            'correct_answer': correct_answer_text,
+            'is_corrected': getattr(ea, 'is_corrected', None) if question_type == 'essay' else True
+        })
+
+    is_test_author = (submission.test.author.id == request.session.get('user_id'))
 
     context = {
         'username': request.session.get('username'),
         'is_authenticated': True,
         'is_test_author': is_test_author,
         'submission': {
-            'id': submission_row[0],
-            'created_at': submission_row[1],
-            'time_spent': submission_row[2],
-            'attempt_number': submission_row[3],
-            'test_id': submission_row[4],
-            'author_id': submission_row[5],
-            'test_title': submission_row[6],
+            'id': submission.id,
+            'created_at': submission.created_at,
+            'time_spent': submission.time_spent,
+            'attempt_number': submission.attempt_number,
+            'test_id': submission.test.id,
+            'author_id': submission.author.id,
+            'test_title': submission.test.title,
             'total_score': total_score,
             'max_score': total_questions
         },
@@ -1613,82 +1273,53 @@ def grade_submission(request, submission_id):
         return redirect('accounts:login')
     
     user_id = request.session['user_id']
-    
-    with connection.cursor() as cursor:
-        # Kiểm tra quyền chấm bài (phải là tác giả của test)
-        cursor.execute("""
-            SELECT t.id, t.title, t.author_id, s.author_id as student_id
-            FROM submissions s
-            JOIN tests t ON s.test_id = t.id
-            WHERE s.id = %s
-        """, [submission_id])
-        
-        row = cursor.fetchone()
-        if not row:
-            raise Http404("Bài nộp không tồn tại")
-        
-        test_id, test_title, test_author_id, student_id = row
-        
-        if test_author_id != user_id:
-            messages.error(request, 'Bạn không có quyền chấm bài này')
+    try:
+        submission = Submission.objects.select_related('test', 'author').get(pk=submission_id)
+    except Submission.DoesNotExist:
+        raise Http404("Bài nộp không tồn tại")
+
+    test_id = submission.test.id
+    test_title = submission.test.title
+    test_author_id = submission.test.author.id
+    student_id = submission.author.id
+
+    if test_author_id != user_id:
+        messages.error(request, 'Bạn không có quyền chấm bài này')
+        return redirect('forum:submission_detail', submission_id=submission_id)
+
+    if request.method == 'POST':
+        try:
+            for key, value in request.POST.items():
+                if key.startswith('grade_'):
+                    answer_id = int(key.split('_')[1])
+                    is_correct = int(value)  # 1 = đúng, 0 = sai
+                    EssayAnswer.objects.filter(id=answer_id).update(is_corrected=bool(is_correct))
+
+            messages.success(request, 'Đã chấm bài thành công!')
             return redirect('forum:submission_detail', submission_id=submission_id)
-        
-        # Xử lý POST - lưu điểm chấm
-        if request.method == 'POST':
-            try:
-                # Lấy điểm chấm cho từng câu tự luận
-                for key, value in request.POST.items():
-                    if key.startswith('grade_'):
-                        answer_id = int(key.split('_')[1])
-                        is_correct = int(value)  # 1 = đúng, 0 = sai
-                        
-                        cursor.execute("""
-                            UPDATE essay_answers
-                            SET is_corrected = %s
-                            WHERE id = %s
-                        """, [is_correct, answer_id])
-                
-                messages.success(request, 'Đã chấm bài thành công!')
-                return redirect('forum:submission_detail', submission_id=submission_id)
-            
-            except Exception as e:
-                messages.error(request, f'Lỗi khi chấm bài: {str(e)}')
-        
-        # Lấy danh sách câu hỏi tự luận chưa chấm
-        cursor.execute("""
-            SELECT 
-                a.id,
-                q.content as question_content,
-                ea.content as answer_content,
-                ea.is_corrected,
-                eq.word_limit
-            FROM answers a
-            JOIN questions q ON a.question_id = q.id
-            JOIN essay_questions eq ON q.id = eq.id
-            JOIN essay_answers ea ON a.id = ea.id
-            WHERE a.submission_id = %s
-            ORDER BY a.id
-        """, [submission_id])
-        
-        essay_answers = []
-        for row in cursor.fetchall():
-            essay_answers.append({
-                'answer_id': row[0],
-                'question_content': row[1],
-                'answer_content': row[2],
-                'is_corrected': row[3],
-                'word_limit': row[4]
-            })
-        
-        # Lấy thông tin sinh viên
-        cursor.execute("""
-            SELECT u.username, u.first_name, u.last_name
-            FROM users u
-            WHERE u.id = %s
-        """, [student_id])
-        
-        student_row = cursor.fetchone()
-        student_name = f"{student_row[1]} {student_row[2]}".strip() or student_row[0]
+        except Exception as e:
+            messages.error(request, f'Lỗi khi chấm bài: {str(e)}')
+
+    # Lấy danh sách câu hỏi tự luận
+    essay_answers = []
+    answers_qs = Answer.objects.filter(submission_id=submission_id, question__essayquestion__isnull=False).order_by('id').select_related('question')
+    for a in answers_qs:
+        eq = None
+        try:
+            eq = a.question.essayquestion
+        except Exception:
+            eq = None
+        ea = EssayAnswer.objects.filter(id=a.id).first()
+        essay_answers.append({
+            'answer_id': a.id,
+            'question_content': a.question.content,
+            'answer_content': ea.content if ea else '',
+            'is_corrected': ea.is_corrected if ea else None,
+            'word_limit': getattr(eq, 'word_limit', 0)
+        })
+
+    student = submission.author
+    student_name = f"{getattr(student, 'first_name', '')} {getattr(student, 'last_name', '')}".strip() or getattr(student, 'username', '')
     
     context = {
         'is_authenticated': True,
