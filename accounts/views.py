@@ -2,6 +2,8 @@ import os
 import hashlib
 from pathlib import Path
 
+# accounts/views.py
+# from .utils import hscoin_generate_new_wallet
 from django.conf import settings
 from django.contrib import messages
 from django.core.files.storage import default_storage
@@ -553,59 +555,57 @@ from django.views.decorators.http import require_POST
 from web3 import Web3 
 from .crypto_utils import encrypt_key
 
-@require_POST
-def api_link_wallet(request):
-    if not request.session.get('user_id'):
-        return JsonResponse({'success': False, 'message': 'Bạn chưa đăng nhập.'})
-    print("--- BẮT ĐẦU XỬ LÝ LIÊN KẾT VÍ ---") # Debug log 1
-    try:
-        data = json.loads(request.body)
-        private_key = data.get('private_key', '').strip()
-        
-        if not private_key:
-            return JsonResponse({'success': False, 'message': 'Thiếu Private Key'})
+# @require_POST
+# def api_link_wallet(request):
 
-        # 1. Suy ra địa chỉ
-        print(f"Đang kiểm tra Private Key: {private_key[:5]}...") # Debug log 2
-        try:
-            w3_temp = Web3()
-            account = w3_temp.eth.account.from_key(private_key)
-            real_address = account.address
-            print(f"Địa chỉ suy ra: {real_address}") # Debug log 3
-        except Exception as e:
-             print(f"Lỗi Web3: {e}")
-             return JsonResponse({'success': False, 'message': 'Private Key sai định dạng.'})
+    # if not request.session.get('user_id'):
+    #     return JsonResponse({'success': False, 'message': 'Bạn chưa đăng nhập.'})
+    # print("--- BẮT ĐẦU XỬ LÝ LIÊN KẾT VÍ ---") # Debug log 1
+    # try:
+    #     data = json.loads(request.body)
+    #     private_key = data.get('private_key', '').strip()
+        
+    #     if not private_key:
+    #         return JsonResponse({'success': False, 'message': 'Thiếu Private Key'})
 
-        # 2. Mã hóa
-        encrypted_pk = encrypt_key(private_key)
-        print("Mã hóa thành công.") # Debug log 4
+    #     # 1. Suy ra địa chỉ
+    #     print(f"Đang kiểm tra Private Key: {private_key[:5]}...") # Debug log 2
+    #     try:
+    #         w3_temp = Web3()
+    #         account = w3_temp.eth.account.from_key(private_key)
+    #         real_address = account.address
+    #         print(f"Địa chỉ suy ra: {real_address}") # Debug log 3
+    #     except Exception as e:
+    #          print(f"Lỗi Web3: {e}")
+    #          return JsonResponse({'success': False, 'message': 'Private Key sai định dạng.'})
+
+    #     # 2. Mã hóa
+    #     encrypted_pk = encrypt_key(private_key)
+    #     print("Mã hóa thành công.") # Debug log 4
         
-        # 3. Lưu vào DB
-        user_id = request.session.get('user_id')
-        print(f"Đang lưu vào DB cho user_id: {user_id}") # Debug log 5
+    #     # 3. Lưu vào DB
+    #     user_id = request.session.get('user_id')
+    #     print(f"Đang lưu vào DB cho user_id: {user_id}") # Debug log 5
         
-        with connection.cursor() as cursor:
-            # --- ĐÂY LÀ CHỖ HAY LỖI NHẤT (DO THIẾU CỘT TRONG DB) ---
-            cursor.execute(
-                "UPDATE students SET wallet_address = %s, encrypted_private_key = %s WHERE id = %s",
-                [real_address, encrypted_pk, user_id]
-            )
+    #     with connection.cursor() as cursor:
+    #         # --- ĐÂY LÀ CHỖ HAY LỖI NHẤT (DO THIẾU CỘT TRONG DB) ---
+    #         cursor.execute(
+    #             "UPDATE students SET wallet_address = %s, encrypted_private_key = %s WHERE id = %s",
+    #             [real_address, encrypted_pk, user_id]
+    #         )
             
-        return JsonResponse({
-            'success': True, 
-            'message': f'Liên kết thành công! Ví: {real_address}'
-        })
+    #     return JsonResponse({
+    #         'success': True, 
+    #         'message': f'Liên kết thành công! Ví: {real_address}'
+    #     })
 
-    except Exception as e:
-        # IN LỖI CHI TIẾT RA TERMINAL
-        print("❌ LỖI NGHIÊM TRỌNG (SERVER CRASH):")
-        traceback.print_exc() # <--- Dòng này sẽ in toàn bộ lỗi ra màn hình đen
-        return JsonResponse({'success': False, 'message': f'Lỗi Server: {str(e)}'})
+    # except Exception as e:
+    #     # IN LỖI CHI TIẾT RA TERMINAL
+    #     print("❌ LỖI NGHIÊM TRỌNG (SERVER CRASH):")
+    #     traceback.print_exc() # <--- Dòng này sẽ in toàn bộ lỗi ra màn hình đen
+    #     return JsonResponse({'success': False, 'message': f'Lỗi Server: {str(e)}'})
 
 
-
-from django.views.decorators.http import require_POST
-# accounts/views.py
 
 # 1. API HỦY LIÊN KẾT VÍ
 @login_required
@@ -637,3 +637,118 @@ def api_get_balance(request):
              return JsonResponse({'success': False, 'balance': 0})
     
     return JsonResponse({'success': False, 'balance': 0})
+
+
+# @login_required
+# @require_POST
+# def api_create_wallet(request):
+#     """
+#     Tự động tạo ví mới cho user (không cần nhập tay)
+#     """
+#     user_id = request.session.get('user_id')
+    
+#     # 1. Gọi HScoin để lấy ví mới
+#     success, result = hscoin_generate_new_wallet()
+    
+#     if not success:
+#         return JsonResponse({'success': False, 'message': f'Lỗi tạo ví: {result}'})
+    
+#     # Kết quả trả về từ HScoin (Cần check kỹ key name trong JSON trả về của họ)
+#     # Ví dụ họ trả về: {'address': '...', 'privateKey': '...'}
+#     new_address = result.get('address')
+#     new_pk = result.get('privateKey') 
+    
+#     if not new_address or not new_pk:
+#         return JsonResponse({'success': False, 'message': 'API HScoin không trả về địa chỉ/key.'})
+
+#     # 2. Mã hóa và Lưu vào DB
+#     try:
+#         encrypted_pk = encrypt_key(new_pk)
+        
+#         with connection.cursor() as cursor:
+#             # Cập nhật vào bảng students
+#             cursor.execute(
+#                 "UPDATE students SET wallet_address = %s, encrypted_private_key = %s WHERE user_id = %s",
+#                 [new_address, encrypted_pk, user_id]
+#             )
+#             # Check xem có update được dòng nào không (nếu chưa có student thì insert)
+#             if cursor.rowcount == 0:
+#                  cursor.execute(
+#                     "INSERT INTO students (user_id, wallet_address, encrypted_private_key, coins) VALUES (%s, %s, %s, 0)",
+#                     [user_id, new_address, encrypted_pk]
+#                 )
+
+#         return JsonResponse({
+#             'success': True, 
+#             'message': 'Đã tạo ví thành công! Địa chỉ và Key đã được lưu tự động.'
+#         })
+
+#     except Exception as e:
+#         return JsonResponse({'success': False, 'message': f'Lỗi Server: {str(e)}'})
+
+
+# accounts/views.py
+
+# --- 1. ĐẢM BẢO CÓ ĐỦ CÁC DÒNG IMPORT NÀY ---
+import json
+from django.db import connection
+from django.http import JsonResponse
+from django.contrib.auth.decorators import login_required
+from django.views.decorators.http import require_POST
+from .crypto_utils import encrypt_key
+
+# Import hàm từ utils (CHÚ Ý DÒNG NÀY)
+from .utils import hscoin_create_new_wallet 
+# --------------------------------------------
+
+@require_POST
+def api_auto_create_wallet(request):
+    # NOTE: project uses custom session fields (request.session['user_id']).
+    # The Django `@login_required` decorator redirects to HTML login page when
+    # `request.user` is anonymous. That causes AJAX calls to receive HTML
+    # (login page) and crash when parsing JSON. Here we check session manually
+    # and return JSON error if not logged in.
+    user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'success': False, 'message': 'Vui lòng đăng nhập'})
+    print(f"--- Đang tạo ví cho User {user_id} ---")
+
+    try:
+        # 1. Gọi utils
+        success, result = hscoin_create_new_wallet()
+        
+        if not success:
+            print(f"Lỗi gọi HScoin: {result}")
+            return JsonResponse({'success': False, 'message': str(result)})
+        
+        # 2. Parse kết quả
+        # Giả sử HScoin trả về: {"address": "...", "privateKey": "..."}
+        new_address = result.get('address')
+        new_pk = result.get('privateKey')
+
+        if not new_address or not new_pk:
+            return JsonResponse({'success': False, 'message': 'HScoin không trả về thông tin ví.'})
+
+        # 3. Mã hóa & Lưu DB
+        encrypted_pk = encrypt_key(new_pk)
+        
+        with connection.cursor() as cursor:
+            # Cập nhật bảng students
+            cursor.execute(
+                "UPDATE students SET wallet_address = %s, encrypted_private_key = %s WHERE id = %s",
+                [new_address, encrypted_pk, user_id]
+            )
+            # Nếu update ko được (do user chưa có trong bảng student), dùng user_id
+            if cursor.rowcount == 0:
+                 cursor.execute(
+                    "UPDATE students SET wallet_address = %s, encrypted_private_key = %s WHERE user_id = %s",
+                    [new_address, encrypted_pk, user_id]
+                )
+
+        return JsonResponse({'success': True, 'message': f'Tạo ví thành công: {new_address}'})
+
+    except Exception as e:
+        # In lỗi ra Terminal để debug
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({'success': False, 'message': f'Lỗi Server: {str(e)}'})

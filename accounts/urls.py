@@ -10,11 +10,14 @@ urlpatterns = [
     path('register/', views.register_view, name='register'),
     path('logout/', views.logout_view, name='logout'),
     path('update-avatar/', views.update_avatar, name='update_avatar'),
-    path('api/link-wallet/', views.api_link_wallet, name='api_link_wallet'),
+    # path('api/link-wallet/', views.api_link_wallet, name='api_link_wallet'),
     
     # API Hủy liên kết ví (Cần cho nút Hủy trong HTML)
     path('api/unlink-wallet/', views.unlink_wallet, name='unlink_wallet'),
-
+    # accounts/urls.py
+path('api/auto-create-wallet/', views.api_auto_create_wallet, name='api_auto_create_wallet'),
+    # Backwards-compatible route expected by templates/older clients
+    path('api/create-wallet/', views.api_auto_create_wallet, name='api_create_wallet'),
     # API Nạp / Rút
     path('api/withdraw/', views.api_withdraw, name='api_withdraw'),
     path('api/deposit/', views.api_deposit, name='api_deposit'),

@@ -112,3 +112,64 @@ def hscoin_get_balance(user_address):
     except Exception as e:
         print(f"Lỗi kết nối lấy số dư: {str(e)}")
         return 0.0
+    
+
+
+# accounts/utils.py
+import requests
+from django.conf import settings
+
+# def hscoin_generate_new_wallet():
+#     """
+#     Gọi sang HScoin để tạo ví mới.
+#     """
+#     api_url = "https://hsc-w3oq.onrender.com/api/generate-wallet"
+#     headers = {
+#         "Content-Type": "application/json",
+#         "x-api-key": settings.HSCOIN_API_KEY # Key được bảo vệ ở đây
+#     }
+    
+#     try:
+#         # API tạo ví thường là POST (hoặc GET tùy tài liệu HScoin)
+#         # Giả sử là POST
+#         response = requests.post(api_url, headers=headers, timeout=10)
+        
+#         if response.status_code == 200:
+#             # Giả sử HScoin trả về: {"address": "0x...", "privateKey": "..."}
+#             return True, response.json()
+#         else:
+#             return False, f"HScoin Error: {response.text}"
+#     except Exception as e:
+#         return False, str(e)
+
+
+
+# accounts/utils.py
+import requests # <--- QUAN TRỌNG
+from django.conf import settings
+from .crypto_utils import decrypt_key
+
+# ... các hàm cũ ...
+
+# === THÊM HÀM NÀY VÀO CUỐI FILE ===
+def hscoin_create_new_wallet():
+    """Gọi HScoin để tạo ví mới"""
+    # Lưu ý: settings.HSCOIN_API_BASE_URL thường là ".../api"
+    # Nên đường dẫn sẽ là ".../api/generate-wallet"
+    url = f"{settings.HSCOIN_API_BASE_URL}/generate-wallet"
+    
+    headers = {
+        "Content-Type": "application/json",
+        "x-api-key": settings.HSCOIN_API_KEY
+    }
+    
+    try:
+        # Gửi request POST rỗng để xin ví
+        response = requests.post(url, json={}, headers=headers, timeout=15)
+        
+        if response.status_code == 200:
+            return True, response.json()
+        else:
+            return False, f"Lỗi HScoin ({response.status_code}): {response.text}"
+    except Exception as e:
+        return False, f"Lỗi kết nối: {str(e)}"

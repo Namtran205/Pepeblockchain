@@ -28,24 +28,8 @@
                         <button class="btn btn-success btn-lg" data-bs-toggle="modal" data-bs-target="#depositModal" {% if not has_wallet %}disabled{% endif %}>
                             <i class="bi bi-arrow-down-circle me-2"></i>Nạp Coin (Token -> Coin)
                         </button>
-                        <button class="btn btn-warning btn-lg" data-bs-toggle="modal" data-bs-target="#withdrawModal" {% if not has_wallet %}disabled{% endif %}>
-                            <i class="bi bi-arrow-up-circle me-2"></i>Rút Coin (Coin -> Token)
-                        </button>
                     </div>
-                    {% if not has_wallet %}
-                        <p class="text-danger mt-2 small">*Vui lòng liên kết ví bên phải để nạp/rút</p>
-                    {% endif %}
-                </div>
-            </div>
-        </div>
 
-        <div class="col-lg-6">
-            <div class="card shadow-sm h-100 border-warning">
-                <div class="card-header bg-warning text-dark">
-                    <h5 class="mb-0"><i class="bi bi-link-45deg me-2"></i>Ví Blockchain (HSCoin)</h5>
-                </div>
-                <div class="card-body">
-                    
                     {% if not has_wallet %}
                     <div id="wallet-connect-section" class="text-center py-4">
                         <i class="bi bi-shield-lock display-1 text-muted mb-3"></i>
@@ -95,15 +79,7 @@
                 <h5 class="modal-title">Liên kết Ví HSCoin</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
-            <div class="modal-body">
-                <div class="alert alert-info small">
-                    Hệ thống sẽ tự động nhận diện địa chỉ ví từ khóa bí mật của bạn.
-                </div>
-                <div class="mb-3">
-                    <label class="form-label">Private Key (Lấy từ HScoin)</label>
-                    <input type="password" id="link-pk" class="form-control" placeholder="Dán Private Key vào đây...">
-                </div>
-            </div>
+
             <div class="modal-footer">
                 <button type="button" class="btn btn-primary" onclick="submitLinkWallet()">Tự động Liên kết</button>
             </div>
@@ -111,29 +87,6 @@
     </div>
 </div>
 
-<!-- <script>
-    // Cập nhật hàm JS tương ứng
-    async function submitLinkWallet() {
-        const pk = document.getElementById('link-pk').value;
-        if (!pk) return alert("Vui lòng nhập Private Key");
-
-        try {
-            const res = await fetch("{% url 'accounts:api_link_wallet' %}", {
-                method: "POST",
-                headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken },
-                // Không cần gửi address nữa
-                body: JSON.stringify({ private_key: pk }) 
-            });
-            const data = await res.json();
-            if (data.success) {
-                alert(data.message);
-                location.reload();
-            } else {
-                alert("Lỗi: " + data.message);
-            }
-        } catch (e) { alert("Lỗi kết nối server"); }
-    }
-</script> -->
 
 <div class="modal fade" id="depositModal" tabindex="-1">
     <div class="modal-dialog">
@@ -179,27 +132,52 @@
     // Token CSRF cho Django
     const csrftoken = '{{ csrf_token }}';
 
-    // 1. HÀM LIÊN KẾT VÍ
-    async function submitLinkWallet() {
-        const address = document.getElementById('link-address').value;
-        const pk = document.getElementById('link-pk').value;
-
-        if (!address || !pk) return alert("Vui lòng điền đủ thông tin");
+async function submitLinkWallet() {
+        // UI Loading
+        const btn = document.querySelector('#linkWalletModal .btn-primary');
+        const oldText = btn.innerText;
+        btn.innerText = "Đang kết nối HScoin...";
+        btn.disabled = true;
 
         try {
-            const res = await fetch("{% url 'accounts:api_link_wallet' %}", {
+            // ✅ Gọi về Django server của mình — dùng csrftoken và gửi cookie phiên
+            const res = await fetch("{% url 'accounts:api_auto_create_wallet' %}", {
                 method: "POST",
-                headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken },
-                body: JSON.stringify({ address: address, private_key: pk })
+                headers: { 
+                    "Content-Type": "application/json", 
+                    "X-CSRFToken": csrftoken
+                },
+                credentials: 'same-origin',
+                body: JSON.stringify({}) // Body rỗng
             });
+
+            const contentType = res.headers.get('content-type') || '';
+            if (!res.ok) {
+                const text = await res.text();
+                throw new Error(`Server Error ${res.status}: ${text.substring(0,200)}`);
+            }
+            if (!contentType.includes('application/json')) {
+                const text = await res.text();
+                throw new Error(`Expected JSON but got HTML/text: ${text.substring(0,200)}`);
+            }
+
             const data = await res.json();
+
             if (data.success) {
-                alert(data.message);
+                alert("✅ " + data.message);
                 location.reload();
             } else {
-                alert("Lỗi: " + data.message);
+                alert("❌ Lỗi: " + data.message);
             }
-        } catch (e) { alert("Lỗi kết nối server"); }
+
+        } catch (e) { 
+            console.error(e);
+            // In lỗi chi tiết ra alert để dễ debug
+            alert("Lỗi kết nối: " + e.message); 
+        } finally {
+            btn.innerText = oldText;
+            btn.disabled = false;
+        }
     }
 
     // 2. HÀM GỌI API NẠP / RÚT CHUNG
@@ -217,6 +195,7 @@
             const res = await fetch(url, {
                 method: "POST",
                 headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken },
+                credentials: 'same-origin',
                 body: JSON.stringify({ amount: amount })
             });
             const data = await res.json();
@@ -242,7 +221,7 @@
 
         try {
             // Bạn cần tạo thêm 1 api nhỏ: api_get_balance để backend query hscoin trả về số dư
-            const res = await fetch("{% url 'accounts:api_get_balance' %}"); 
+            const res = await fetch("{% url 'accounts:api_get_balance' %}", { credentials: 'same-origin' }); 
             const data = await res.json();
             if (data.success) {
                 balanceElem.innerText = data.balance + " STK";
@@ -264,44 +243,5 @@
         alert("Đã copy: " + text);
     }
 
-    async function submitLinkWallet() {
-        // 1. Chỉ tìm ô Private Key (id="link-pk")
-        const pkInput = document.getElementById('link-pk');
-        
-        // Kiểm tra kỹ xem có tìm thấy ô này không
-        if (!pkInput) {
-            alert("Lỗi CODE: Không tìm thấy thẻ input có id='link-pk' trong HTML.");
-            return;
-        }
-
-        const pk = pkInput.value.trim();
-        if (!pk) return alert("Vui lòng nhập Private Key!");
-
-        // 2. Gửi về Server
-        try {
-            const res = await fetch("/accounts/api/link-wallet/", {
-                method: "POST",
-                headers: { 
-                    "Content-Type": "application/json", 
-                    "X-CSRFToken": '{{ csrf_token }}' // Hoặc dùng hàm getCookie nếu code tách file
-                },
-                // Chỉ gửi private_key, không gửi address nữa
-                body: JSON.stringify({ private_key: pk }) 
-            });
-
-            const data = await res.json();
-            
-            if (data.success) {
-                alert("✅ " + data.message);
-                location.reload(); // Tải lại trang để hiện ví
-            } else {
-                alert("❌ Lỗi: " + data.message);
-            }
-
-        } catch (e) { 
-            console.error(e);
-            alert("⚠️ Lỗi kết nối Server (Xem console F12)"); 
-        }
-    }
 </script>
 {% endblock %}

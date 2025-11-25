@@ -145,7 +145,7 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 # Cấu hình Blockchain
 HSCOIN_API_BASE_URL="https://hsc-w3oq.onrender.com/api" # URL mạng blockchain của bạn
-HSCOIN_API_KEY="2dbf580f5c634947ba4f29935570cc4d"
+HSCOIN_API_KEY="30ee8479531340b497f4069ec873a498"
 # CHAIN_ID = 1337 # Thay bằng Chain ID mạng của bạn (thường 1337 hoặc xem trên web)
 HSCOIN_ADMIN_EMAIL="namhoangtran191@gmail.com"
 HSCOIN_ADMIN_PASSWORD=123456
