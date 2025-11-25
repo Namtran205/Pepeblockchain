@@ -25,6 +25,20 @@ def wallet(request):
         user_coins = user.coins or 0
     except User.DoesNotExist:
         user_coins = 0
+
+    # Lấy thông tin ví (student) để hiển thị wallet address nếu đã liên kết
+    has_wallet = False
+    wallet_address = None
+    try:
+        from accounts.models import Student
+        student = Student.objects.filter(pk=user_id).first()
+        if student and getattr(student, 'wallet_address', None):
+            has_wallet = True
+            wallet_address = student.wallet_address
+    except Exception:
+        # Nếu model không tồn tại hoặc lỗi, để mặc định là chưa có ví
+        has_wallet = False
+        wallet_address = None
     
     # Tạo referral link
     referral_link = "#"
@@ -45,6 +59,8 @@ def wallet(request):
         'referral_link': referral_link,
         'transactions': transaction_history,
         'is_authenticated': True,
+        'has_wallet': has_wallet,
+        'wallet_address': wallet_address,
     }
     return render(request, 'wallet/index.html', context)
 

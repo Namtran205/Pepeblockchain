@@ -21,6 +21,8 @@ path('api/auto-create-wallet/', views.api_auto_create_wallet, name='api_auto_cre
     # API Nạp / Rút
     path('api/withdraw/', views.api_withdraw, name='api_withdraw'),
     path('api/deposit/', views.api_deposit, name='api_deposit'),
+    # API Transfer (P2P or send to any address)
+    path('api/transfer/', views.api_transfer_p2p, name='api_transfer_p2p'),
     
     # API Lấy số dư Token (Cho Javascript gọi cập nhật giao diện)
     path('api/get-balance/', views.api_get_balance, name='api_get_balance'),

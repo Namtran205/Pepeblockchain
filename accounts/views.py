@@ -387,8 +387,8 @@ def update_avatar(request):
 
 from django.shortcuts import get_object_or_404
 from django.db import connection, transaction
-from django.http import JsonResponse
-from django.views.decorators.http import require_POST
+from django.http import JsonResponse, HttpResponse
+from django.views.decorators.http import require_POST, require_http_methods
 import json
 
 from .utils import admin_mint_tokens, user_burn_tokens, user_transfer_tokens
@@ -402,25 +402,38 @@ def get_user_wallet(user_id):
 # ======================================================
 # 1. RÚT COINS -> TOKENS (User đổi điểm thành Token)
 # ======================================================
-@login_required
-@require_POST
+@require_http_methods(["POST", "OPTIONS"])
 def api_withdraw(request):
+    if request.method == 'OPTIONS':
+        return HttpResponse(status=200)
+    # Debug log to help diagnose 405/405-like issues from the client
+    try:
+        logger.debug(f"api_withdraw called: method={request.method} path={request.path} content_type={request.content_type}")
+    except Exception:
+        print(f"api_withdraw called: method={request.method} path={request.path}")
+    # Use session-based auth (custom) instead of @login_required so AJAX gets JSON
     user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'success': False, 'message': 'Vui lòng đăng nhập'}, status=401)
+
     amount = float(json.loads(request.body).get('amount'))
 
     row = get_user_wallet(user_id)
-    if not row: return JsonResponse({'success': False, 'message': 'Chưa liên kết ví'})
+    if not row:
+        return JsonResponse({'success': False, 'message': 'Chưa liên kết ví'})
     user_address = row[0]
 
     with connection.cursor() as cursor:
         # 1. Trừ Coins trong DB trước (để tránh spam)
-        cursor.execute("SELECT coins FROM students WHERE id = %s", [user_id])
+        # `coins` column lives on the `users` table (created in initial raw SQL),
+        # not on `students` which references users via id.
+        cursor.execute("SELECT coins FROM users WHERE id = %s", [user_id])
         current_coins = cursor.fetchone()[0]
         
         if current_coins < amount:
             return JsonResponse({'success': False, 'message': 'Không đủ Coins'})
 
-        cursor.execute("UPDATE students SET coins = coins - %s WHERE id = %s", [amount, user_id])
+        cursor.execute("UPDATE users SET coins = coins - %s WHERE id = %s", [amount, user_id])
 
         # 2. Gọi Admin Mint Token trả cho user
         success, result = admin_mint_tokens(user_address, amount)
@@ -429,20 +442,30 @@ def api_withdraw(request):
             return JsonResponse({'success': True, 'message': f'Rút thành công! Hash: {result}'})
         else:
             # 3. Nếu lỗi blockchain -> Hoàn tiền lại DB (Rollback)
-            cursor.execute("UPDATE students SET coins = coins + %s WHERE id = %s", [amount, user_id])
+            cursor.execute("UPDATE users SET coins = coins + %s WHERE id = %s", [amount, user_id])
             return JsonResponse({'success': False, 'message': f'Lỗi Blockchain: {result}'})
 
 # ======================================================
 # 2. NẠP TOKENS -> COINS (User đốt Token để lấy điểm)
 # ======================================================
-@login_required
-@require_POST
+@require_http_methods(["POST", "OPTIONS"])
 def api_deposit(request):
+    if request.method == 'OPTIONS':
+        return HttpResponse(status=200)
+    try:
+        logger.debug(f"api_deposit called: method={request.method} path={request.path} content_type={request.content_type}")
+    except Exception:
+        print(f"api_deposit called: method={request.method} path={request.path}")
+    # Return JSON 401 when not logged in to avoid HTML redirect for AJAX
     user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'success': False, 'message': 'Vui lòng đăng nhập'}, status=401)
+
     amount = float(json.loads(request.body).get('amount'))
 
     row = get_user_wallet(user_id)
-    if not row: return JsonResponse({'success': False, 'message': 'Chưa liên kết ví'})
+    if not row:
+        return JsonResponse({'success': False, 'message': 'Chưa liên kết ví'})
     user_address, encrypted_pk = row
 
     # 1. Gọi User Burn Token trên Blockchain
@@ -451,7 +474,7 @@ def api_deposit(request):
     if success:
         # 2. Nếu thành công -> Cộng Coins vào DB
         with connection.cursor() as cursor:
-            cursor.execute("UPDATE students SET coins = coins + %s WHERE id = %s", [amount, user_id])
+            cursor.execute("UPDATE users SET coins = coins + %s WHERE id = %s", [amount, user_id])
         return JsonResponse({'success': True, 'message': f'Nạp thành công! Hash: {result}'})
     else:
         return JsonResponse({'success': False, 'message': f'Lỗi Blockchain: {result}'})
@@ -459,16 +482,25 @@ def api_deposit(request):
 # ======================================================
 # 3. CHUYỂN TIỀN P2P (User A -> User B)
 # ======================================================
-@login_required
-@require_POST
+@require_http_methods(["POST", "OPTIONS"])
 def api_transfer_p2p(request):
+    if request.method == 'OPTIONS':
+        return HttpResponse(status=200)
+    try:
+        logger.debug(f"api_transfer_p2p called: method={request.method} path={request.path} content_type={request.content_type}")
+    except Exception:
+        print(f"api_transfer_p2p called: method={request.method} path={request.path}")
     sender_id = request.session.get('user_id')
+    if not sender_id:
+        return JsonResponse({'success': False, 'message': 'Vui lòng đăng nhập'}, status=401)
+
     data = json.loads(request.body)
     receiver_address = data.get('receiver_address')
     amount = float(data.get('amount'))
 
     sender_row = get_user_wallet(sender_id)
-    if not sender_row: return JsonResponse({'success': False, 'message': 'Chưa liên kết ví'})
+    if not sender_row:
+        return JsonResponse({'success': False, 'message': 'Chưa liên kết ví'})
     sender_addr, sender_enc_pk = sender_row
 
     # Gọi hàm Transfer
@@ -551,7 +583,7 @@ from django.shortcuts import render, redirect
 from django.db import connection
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
-from django.views.decorators.http import require_POST
+from django.views.decorators.http import require_http_methods
 from web3 import Web3 
 from .crypto_utils import encrypt_key
 
@@ -608,34 +640,61 @@ from .crypto_utils import encrypt_key
 
 
 # 1. API HỦY LIÊN KẾT VÍ
-@login_required
 @require_POST
 def unlink_wallet(request):
+    # Project uses custom session 'user_id' (not django.contrib.auth). Avoid
+    # using @login_required which would redirect to HTML login page for AJAX.
     user_id = request.session.get('user_id')
-    with connection.cursor() as cursor:
-        # Xóa private key và address khỏi DB
-        cursor.execute("UPDATE students SET wallet_address = NULL, encrypted_private_key = NULL WHERE id = %s", [user_id])
-    return redirect('wallet') # Load lại trang ví
+    if not user_id:
+        # If no session, return to login with message
+        from django.contrib import messages
+        messages.error(request, 'Vui lòng đăng nhập để hủy liên kết ví')
+        return redirect('accounts:login')
 
-# 2. API LẤY SỐ DƯ TOKEN (Cho Frontend cập nhật)
-@login_required
-def api_get_balance(request):
-    user_id = request.session.get('user_id')
+    # Lưu địa chỉ ví cũ để thông báo (không thực hiện blacklist persistent ở đây)
+    old_address = None
     with connection.cursor() as cursor:
         cursor.execute("SELECT wallet_address FROM students WHERE id = %s", [user_id])
         row = cursor.fetchone()
-    
+        if row:
+            old_address = row[0]
+
+        # Xóa private key và address khỏi DB
+        cursor.execute("UPDATE students SET wallet_address = NULL, encrypted_private_key = NULL WHERE id = %s", [user_id])
+        # Nếu có địa chỉ cũ, lưu vào bảng unlinked_wallets để ngăn tái liên kết (theo user)
+        if old_address:
+            try:
+                cursor.execute("INSERT INTO unlinked_wallets (user_id, address) VALUES (%s, %s)", [user_id, old_address])
+            except Exception:
+                # Nếu bảng chưa tồn tại hoặc có lỗi, bỏ qua cho đến khi migration được áp dụng
+                pass
+
+    # Thông báo cho người dùng (gợi ý rằng ví cũ sẽ không thể liên kết lại)
+    from django.contrib import messages
+    messages.success(request, 'Đã hủy liên kết ví thành công.')
+    if old_address:
+        messages.warning(request, 'Lưu ý: sau khi hủy liên kết, bạn không thể liên kết lại ví cũ này.')
+
+    return redirect('wallet:index')
+
+# 2. API LẤY SỐ DƯ TOKEN (Cho Frontend cập nhật)
+def api_get_balance(request):
+    user_id = request.session.get('user_id')
+    if not user_id:
+        return JsonResponse({'success': False, 'balance': 0, 'message': 'Vui lòng đăng nhập'}, status=401)
+
+    with connection.cursor() as cursor:
+        cursor.execute("SELECT wallet_address FROM students WHERE id = %s", [user_id])
+        row = cursor.fetchone()
+
     if row and row[0]:
-        # Gọi hàm utils để check blockchain
-        # Lưu ý: Bạn cần chắc chắn hàm hscoin_get_balance đã có trong utils.py
-        # Nếu chưa có hàm hscoin_get_balance, bạn có thể trả về 0 tạm thời
         try:
-             # balance = hscoin_get_balance(row[0]) 
-             balance = 0 # Tạm thời để 0 nếu chưa viết hàm check balance trong utils
+             # balance = hscoin_get_balance(row[0])
+             balance = 0
              return JsonResponse({'success': True, 'balance': balance})
-        except:
+        except Exception:
              return JsonResponse({'success': False, 'balance': 0})
-    
+
     return JsonResponse({'success': False, 'balance': 0})
 
 
@@ -691,18 +750,23 @@ def api_get_balance(request):
 
 # --- 1. ĐẢM BẢO CÓ ĐỦ CÁC DÒNG IMPORT NÀY ---
 import json
+import logging
 from django.db import connection
 from django.http import JsonResponse
 from django.contrib.auth.decorators import login_required
 from django.views.decorators.http import require_POST
 from .crypto_utils import encrypt_key
 
+logger = logging.getLogger(__name__)
+
 # Import hàm từ utils (CHÚ Ý DÒNG NÀY)
 from .utils import hscoin_create_new_wallet 
 # --------------------------------------------
 
-@require_POST
+@require_http_methods(["POST", "OPTIONS"])
 def api_auto_create_wallet(request):
+    if request.method == 'OPTIONS':
+        return HttpResponse(status=200)
     # NOTE: project uses custom session fields (request.session['user_id']).
     # The Django `@login_required` decorator redirects to HTML login page when
     # `request.user` is anonymous. That causes AJAX calls to receive HTML
@@ -725,27 +789,38 @@ def api_auto_create_wallet(request):
         # Giả sử HScoin trả về: {"address": "...", "privateKey": "..."}
         new_address = result.get('address')
         new_pk = result.get('privateKey')
-
+        print(f"{new_address}\n")
+        # Sử dụng trực tiếp dữ liệu HScoin trả về: address và privateKey.
+        # Không in private key ra log để bảo mật.
         if not new_address or not new_pk:
             return JsonResponse({'success': False, 'message': 'HScoin không trả về thông tin ví.'})
 
-        # 3. Mã hóa & Lưu DB
+        # Kiểm tra nếu user đã từng hủy liên kết ví này -> không cho liên kết lại
+        try:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT 1 FROM unlinked_wallets WHERE user_id = %s AND address = %s LIMIT 1", [user_id, new_address])
+                if cursor.fetchone():
+                    return JsonResponse({'success': False, 'message': 'Bạn đã hủy liên kết ví này trước đó, không thể liên kết lại.'})
+        except Exception:
+            # Nếu bảng chưa tồn tại, bỏ qua kiểm tra
+            pass
+
+        # 3. Mã hóa & Lưu DB — lưu chính xác address/privateKey do HScoin trả về
         encrypted_pk = encrypt_key(new_pk)
-        
+        save_address = new_address
+
         with connection.cursor() as cursor:
-            # Cập nhật bảng students
             cursor.execute(
                 "UPDATE students SET wallet_address = %s, encrypted_private_key = %s WHERE id = %s",
-                [new_address, encrypted_pk, user_id]
+                [save_address, encrypted_pk, user_id]
             )
-            # Nếu update ko được (do user chưa có trong bảng student), dùng user_id
             if cursor.rowcount == 0:
-                 cursor.execute(
-                    "UPDATE students SET wallet_address = %s, encrypted_private_key = %s WHERE user_id = %s",
-                    [new_address, encrypted_pk, user_id]
+                cursor.execute(
+                    "INSERT INTO students (id, wallet_address, encrypted_private_key) VALUES (%s, %s, %s)",
+                    [user_id, save_address, encrypted_pk]
                 )
 
-        return JsonResponse({'success': True, 'message': f'Tạo ví thành công: {new_address}'})
+        return JsonResponse({'success': True, 'message': f'Tạo ví thành công: {save_address}'})
 
     except Exception as e:
         # In lỗi ra Terminal để debug

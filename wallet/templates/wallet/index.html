@@ -12,60 +12,84 @@
     {% endif %}
 
     <div class="row g-4">
-        
         <div class="col-lg-6">
             <div class="card shadow-sm h-100">
                 <div class="card-header bg-primary text-white">
                     <h5 class="mb-0"><i class="bi bi-wallet2 me-2"></i>Ví PEPE (Nội bộ)</h5>
                 </div>
-                <div class="card-body text-center d-flex flex-column justify-content-center">
+                <div class="card-body">
                     <h6 class="text-muted">SỐ DƯ KHẢ DỤNG</h6>
-                    <h1 class="display-4 fw-bold text-primary mb-4">
-                        <i class="bi bi-coin"></i> <span id="db-coin-balance">{{ user_coins|default:"0" }}</span>
-                    </h1>
-                    
-                    <div class="d-grid gap-2">
-                        <button class="btn btn-success btn-lg" data-bs-toggle="modal" data-bs-target="#depositModal" {% if not has_wallet %}disabled{% endif %}>
-                            <i class="bi bi-arrow-down-circle me-2"></i>Nạp Coin (Token -> Coin)
-                        </button>
+                    <h2 class="display-6 fw-bold text-primary mb-3"><i class="bi bi-coin me-1"></i> <span id="db-coin-balance">{{ user_coins|default:"0" }}</span></h2>
+                    <small class="text-muted d-block mb-3">Token trên blockchain (STK): <span id="token-balance">Đang tải...</span></small>
+
+                    <div class="mb-3">
+                        <label class="form-label text-muted small">ĐỊA CHỈ VÍ CỦA BẠN</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control font-monospace" value="{{ wallet_address }}" readonly>
+                            <button class="btn btn-outline-secondary" onclick="copyAddress('{{ wallet_address }}')">
+                                <i class="bi bi-clipboard"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#depositModal" {% if not has_wallet %}disabled{% endif %}><i class="bi bi-arrow-down-circle me-1"></i> Nạp Coin (Token → Coin)</button>
+                            <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#withdrawModal" {% if not has_wallet %}disabled{% endif %}><i class="bi bi-arrow-up-circle me-1"></i> Rút Coin (Coin → Token)</button>
+                        </div>
+
+                        <div class="card mt-3">
+                            <div class="card-body">
+                                <h6 class="card-title mb-2">Chuyển Token tới ví khác</h6>
+                                <div class="mb-2">
+                                    <label class="form-label small">Địa chỉ nhận</label>
+                                    <input id="transfer-address" type="text" class="form-control font-monospace" placeholder="0x... hoặc địa chỉ HScoin khác">
+                                </div>
+                                <div class="mb-2">
+                                    <label class="form-label small">Số lượng Token</label>
+                                    <input id="transfer-amount" type="number" class="form-control" placeholder="Số lượng Token">
+                                </div>
+                                <div class="d-grid">
+                                    <button class="btn btn-primary" onclick="apiTransfer()" {% if not has_wallet %}disabled{% endif %}><i class="bi bi-send me-1"></i> Gửi Token</button>
+                                </div>
+                                <div class="mt-2 small text-muted">Lưu ý: kiểm tra kỹ địa chỉ trước khi gửi.</div>
+                            </div>
+                        </div>
                     </div>
 
                     {% if not has_wallet %}
-                    <div id="wallet-connect-section" class="text-center py-4">
-                        <i class="bi bi-shield-lock display-1 text-muted mb-3"></i>
-                        <p>Nhập Private Key để hệ thống thực hiện giao dịch tự động.</p>
-                        <button class="btn btn-dark" data-bs-toggle="modal" data-bs-target="#linkWalletModal">
-                            <i class="bi bi-key me-2"></i>Liên kết Ví ngay
-                        </button>
-                    </div>
-
+                        <div id="wallet-connect-section" class="text-center py-4">
+                            <i class="bi bi-shield-lock display-1 text-muted mb-3"></i>
+                            <p>Nhập Private Key để hệ thống thực hiện giao dịch tự động.</p>
+                            <button class="btn btn-dark" data-bs-toggle="modal" data-bs-target="#linkWalletModal">
+                                <i class="bi bi-key me-2"></i>Liên kết Ví ngay
+                            </button>
+                        </div>
                     {% else %}
-                    <div id="wallet-info-section">
-                        <div class="mb-3">
-                            <label class="form-label text-muted small">ĐỊA CHỈ VÍ CỦA BẠN</label>
-                            <div class="input-group">
-                                <input type="text" class="form-control font-monospace" value="{{ wallet_address }}" readonly>
-                                <button class="btn btn-outline-secondary" onclick="copyAddress('{{ wallet_address }}')">
-                                    <i class="bi bi-clipboard"></i>
-                                </button>
-                            </div>
-                        </div>
-                        <div class="row text-center mb-3">
-                            <div class="col-12 border-end">
-                                <small class="text-muted">TOKEN TRÊN BLOCKCHAIN (STK)</small>
-                                <h4 class="fw-bold text-warning" id="token-balance">Đang tải...</h4>
-                            </div>
-                        </div>
                         <div class="alert alert-success small mb-0">
                             <i class="bi bi-check-circle me-1"></i>Đã liên kết ví thành công.
                         </div>
-                        <form method="POST" action="{% url 'unlink_wallet' %}" class="mt-3">
+                        <form method="POST" action="{% url 'accounts:unlink_wallet' %}" class="mt-3">
                             {% csrf_token %}
                             <button type="submit" class="btn btn-sm btn-outline-danger w-100">Hủy liên kết ví</button>
                         </form>
-                    </div>
                     {% endif %}
+                </div>
+            </div>
+        </div>
 
+        <div class="col-lg-6">
+            <div class="card shadow-sm h-100">
+                <div class="card-header bg-light">
+                    <h6 class="mb-0">Lịch sử giao dịch</h6>
+                </div>
+                <div class="card-body">
+                    <p class="small text-muted">Danh sách giao dịch gần đây sẽ hiển thị ở đây (sẽ bổ sung sau).</p>
+                    <div class="placeholder-glow">
+                        <span class="placeholder col-12 mb-2"></span>
+                        <span class="placeholder col-10 mb-2"></span>
+                        <span class="placeholder col-8 mb-2"></span>
+                    </div>
                 </div>
             </div>
         </div>
@@ -181,15 +205,28 @@ async function submitLinkWallet() {
     }
 
     // 2. HÀM GỌI API NẠP / RÚT CHUNG
+    // 2. HÀM GỌI API NẠP / RÚT CHUNG (SỬA LỖI)
     async function apiAction(type) {
-        const inputId = type === 'deposit' ? 'deposit-amount' : 'withdraw-amount';
-        const url = type === 'deposit' ? "{% url 'accounts:api_deposit' %}" : "{% url 'accounts:api_withdraw' %}";
+        let inputId, url, btnSelector;
+
+        if (type === 'deposit') {
+            inputId = 'deposit-amount';
+            url = "{% url 'accounts:api_deposit' %}";
+            btnSelector = '#depositModal .btn-success';
+        } else {
+            inputId = 'withdraw-amount';
+            url = "{% url 'accounts:api_withdraw' %}";
+            btnSelector = '#withdrawModal .btn-warning';
+        }
         
         const amount = document.getElementById(inputId).value;
         if (!amount || amount <= 0) return alert("Số lượng không hợp lệ");
 
         // UI Loading
-        alert("Đang xử lý giao dịch trên Blockchain... Vui lòng đợi!");
+        const btn = document.querySelector(btnSelector);
+        const oldText = btn.innerText;
+        btn.innerText = "Đang xử lý...";
+        btn.disabled = true;
 
         try {
             const res = await fetch(url, {
@@ -198,18 +235,71 @@ async function submitLinkWallet() {
                 credentials: 'same-origin',
                 body: JSON.stringify({ amount: amount })
             });
+
+            // Kiểm tra Content-Type trả về
+            const contentType = res.headers.get("content-type");
+            if (!contentType || !contentType.includes("application/json")) {
+                // Nếu không phải JSON, tức là server trả về HTML lỗi hoặc trang Login
+                const text = await res.text();
+                console.error("Server returned non-JSON:", text);
+                
+                if (text.includes("login") || text.includes("Đăng nhập")) {
+                    alert("Phiên đăng nhập hết hạn. Vui lòng F5 và đăng nhập lại.");
+                } else {
+                    alert("Lỗi Server (500): Vui lòng kiểm tra Terminal Django để biết chi tiết.");
+                }
+                return; // Dừng hàm
+            }
+
             const data = await res.json();
             
             if (data.success) {
-                alert(data.message);
+                alert("✅ " + data.message);
                 location.reload();
             } else {
-                alert("Thất bại: " + data.message);
+                alert("❌ Thất bại: " + data.message);
             }
         } catch (e) { 
             console.error(e);
-            alert("Lỗi kết nối server"); 
+            alert("Lỗi kết nối: " + e.message); 
+        } finally {
+            if (btn) {
+                btn.innerText = oldText;
+                btn.disabled = false;
+            }
         }
+    }
+    // 2b. Gửi token tới địa chỉ khác
+    async function apiTransfer() {
+        const addr = document.getElementById('transfer-address').value.trim();
+        const amount = document.getElementById('transfer-amount').value;
+        if (!addr) return alert('Nhập địa chỉ nhận');
+        if (!amount || amount <= 0) return alert('Số lượng không hợp lệ');
+
+        try {
+            const res = await fetch("{% url 'accounts:api_transfer_p2p' %}", {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrftoken },
+                credentials: 'same-origin',
+                body: JSON.stringify({ receiver_address: addr, amount: amount })
+            });
+
+            const contentType = res.headers.get('content-type') || '';
+            if (!res.ok) {
+                const text = await res.text();
+                console.error('apiTransfer error response:', res.status, text.substring(0,400));
+                return alert('Lỗi server: ' + res.status + '. Vui lòng thử lại hoặc đăng nhập lại.');
+            }
+
+            if (!contentType.includes('application/json')) {
+                const text = await res.text();
+                console.error('apiTransfer non-json response:', text.substring(0,400));
+                return alert('Phản hồi không hợp lệ từ server. Có thể bạn đã bị đăng xuất. Vui lòng đăng nhập lại.');
+            }
+
+            const data = await res.json();
+            if (data.success) { alert('Giao dịch thành công: ' + data.message); location.reload(); } else { alert('Thất bại: ' + data.message); }
+        } catch (e) { console.error(e); alert('Lỗi kết nối server: ' + e.message); }
     }
 
     // 3. HÀM LOAD SỐ DƯ TOKEN TỪ BACKEND
