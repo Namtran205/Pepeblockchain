@@ -1,0 +1,38 @@
+[
+  {
+    "type": "transfer",
+    "amount": 5.0,
+    "currency": "STK",
+    "counterparty": "0x98a63b8e7aa5328827abcdd5f5c3f4d1ec2ed6a3",
+    "tx_hash": null,
+    "note": "Chuyển token tới địa chỉ khác",
+    "ts": "2025-11-26T01:46:55.759348Z"
+  },
+  {
+    "type": "withdraw",
+    "amount": 1.0,
+    "currency": "COIN",
+    "counterparty": null,
+    "tx_hash": null,
+    "note": "Rút Coin -> Token (admin mint)",
+    "ts": "2025-11-26T01:46:22.679551Z"
+  },
+  {
+    "type": "deposit",
+    "amount": 10.0,
+    "currency": "COIN",
+    "counterparty": null,
+    "tx_hash": null,
+    "note": "Nạp từ Token (blockchain) về Coin nội bộ",
+    "ts": "2025-11-26T01:46:03.361795Z"
+  },
+  {
+    "type": "deposit",
+    "amount": 2.0,
+    "currency": "COIN",
+    "counterparty": null,
+    "tx_hash": null,
+    "note": "Nạp từ Token (blockchain) về Coin nội bộ",
+    "ts": "2025-11-26T01:45:51.930937Z"
+  }
+]

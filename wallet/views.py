@@ -52,6 +52,11 @@ def wallet(request):
     
     # Lấy lịch sử giao dịch (nếu có)
     transaction_history = []
+    try:
+        from accounts.utils import read_user_txs
+        transaction_history = read_user_txs(user_id, limit=50)
+    except Exception:
+        transaction_history = []
     
     context = {
         'username': username,

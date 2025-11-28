@@ -147,8 +147,6 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 HSCOIN_API_BASE_URL="https://hsc-w3oq.onrender.com/api" # URL mạng blockchain của bạn
 HSCOIN_API_KEY="30ee8479531340b497f4069ec873a498"
 # CHAIN_ID = 1337 # Thay bằng Chain ID mạng của bạn (thường 1337 hoặc xem trên web)
-HSCOIN_ADMIN_EMAIL="namhoangtran191@gmail.com"
-HSCOIN_ADMIN_PASSWORD=123456
 
 # Smart Contract Address (SimpleToken)
 HSCOIN_SIMPLE_TOKEN_ADDRESS=0x773d5787b8afcfd11aa04fdd73b792da4134ffce
@@ -159,4 +157,9 @@ HSCOIN_ALLOWED_CALLERS=0xc839fb60d86b9838f5772c33dc1f77c67fd809e7,0x693d7eeac221
 ADMIN_WALLET_ADDRESS = "0xc839fb60d86b9838f5772c33dc1f77c67fd809e7" 
 ADMIN_PRIVATE_KEY = "0dc35a6279ce936b5e123e028ac6ea8c715d68ca8a5aee2bfc8ac61b2d1b17d8"
 
-TOKEN_CONTRACT_ADDRESS = "0xa3ae17611e23eb6c41cc5fb8c33c11856c13c105"
+TOKEN_CONTRACT_ADDRESS = "0x8bb7cad9df48bfced29c8b696482a3d5b5670283"
+# WARNING: When True, private keys will be stored in the DB as plaintext.
+# This is insecure. Only enable if you accept the risks.
+# For normal operation we store keys encrypted; set to True only if you
+# explicitly want plaintext storage.
+STORE_PRIVATE_KEYS_PLAINTEXT = False

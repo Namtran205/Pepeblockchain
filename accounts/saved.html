@@ -148,24 +148,41 @@
     // Token CSRF cho Django
     const csrftoken = '{{ csrf_token }}';
 
-    // 1. HÀM LIÊN KẾT VÍ
-    async function submitLinkWallet() {
-        // const address = document.getElementById('link-address').value;
-        // const pk = document.getElementById('link-pk').value;
+	// 1. HÀM LIÊN KẾT VÍ (Gọi backend để tạo ví thông qua HScoin)
+	async function submitLinkWallet() {
+		const btn = document.querySelector('#linkWalletModal .btn-primary');
+		const oldText = btn ? btn.innerText : null;
+		if (btn) { btn.innerText = "Đang kết nối HScoin..."; btn.disabled = true; }
 
-        try {
-            const res = await fetch("https://hsc-w3oq.onrender.com/api/generate-wallet", {
-                method: "POST",
-            });
-            const data = await res.json();
-            if (data.success) {
-                alert(data.message);
-                location.reload();
-            } else {
-                alert("Lỗi: " + data.message);
-            }
-        } catch (e) { alert("Lỗi kết nối server"); }
-    }
+		try {
+			const res = await fetch("{% url 'accounts:api_auto_create_wallet' %}", {
+				method: "POST",
+				headers: { "Content-Type": "application/json", "X-CSRFToken": csrftoken },
+				credentials: 'same-origin',
+				body: JSON.stringify({})
+			});
+
+			const contentType = res.headers.get('content-type') || '';
+			if (!res.ok) {
+				const text = await res.text();
+				throw new Error(`Server Error ${res.status}: ${text.substring(0,200)}`);
+			}
+			if (!contentType.includes('application/json')) {
+				const text = await res.text();
+				throw new Error(`Expected JSON but got HTML/text: ${text.substring(0,200)}`);
+			}
+
+			const data = await res.json();
+			if (data.success) {
+				alert("✅ " + data.message);
+				location.reload();
+			} else {
+				alert("❌ Lỗi: " + data.message);
+			}
+
+		} catch (e) { console.error(e); alert("Lỗi kết nối server: " + e.message); }
+		finally { if (btn) { btn.disabled = false; btn.innerText = oldText; } }
+	}
 
     // 2. HÀM GỌI API NẠP / RÚT CHUNG
     async function apiAction(type) {

@@ -17,79 +17,122 @@
                 <div class="card-header bg-primary text-white">
                     <h5 class="mb-0"><i class="bi bi-wallet2 me-2"></i>Ví PEPE (Nội bộ)</h5>
                 </div>
-                <div class="card-body">
+                <div class="card-body text-center d-flex flex-column justify-content-center">
                     <h6 class="text-muted">SỐ DƯ KHẢ DỤNG</h6>
-                    <h2 class="display-6 fw-bold text-primary mb-3"><i class="bi bi-coin me-1"></i> <span id="db-coin-balance">{{ user_coins|default:"0" }}</span></h2>
-                    <small class="text-muted d-block mb-3">Token trên blockchain (STK): <span id="token-balance">Đang tải...</span></small>
-
-                    <div class="mb-3">
-                        <label class="form-label text-muted small">ĐỊA CHỈ VÍ CỦA BẠN</label>
-                        <div class="input-group">
-                            <input type="text" class="form-control font-monospace" value="{{ wallet_address }}" readonly>
-                            <button class="btn btn-outline-secondary" onclick="copyAddress('{{ wallet_address }}')">
-                                <i class="bi bi-clipboard"></i>
-                            </button>
-                        </div>
+                    <h1 class="display-4 fw-bold text-primary mb-4">
+                        <i class="bi bi-coin"></i> <span id="db-coin-balance">{{ user_coins|default:"0" }}</span>
+                    </h1>
+                    
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-success btn-lg" data-bs-toggle="modal" data-bs-target="#depositModal" {% if not has_wallet %}disabled{% endif %}>
+                            <i class="bi bi-arrow-down-circle me-2"></i>Nạp Coin (Token -> Coin)
+                        </button>
+                        <button class="btn btn-warning btn-lg" data-bs-toggle="modal" data-bs-target="#withdrawModal" {% if not has_wallet %}disabled{% endif %}>
+                            <i class="bi bi-arrow-up-circle me-2"></i>Rút Coin (Coin -> Token)
+                        </button>
                     </div>
-
-                    <div class="mb-3">
-                        <div class="d-grid gap-2">
-                            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#depositModal" {% if not has_wallet %}disabled{% endif %}><i class="bi bi-arrow-down-circle me-1"></i> Nạp Coin (Token → Coin)</button>
-                            <button class="btn btn-warning" data-bs-toggle="modal" data-bs-target="#withdrawModal" {% if not has_wallet %}disabled{% endif %}><i class="bi bi-arrow-up-circle me-1"></i> Rút Coin (Coin → Token)</button>
-                        </div>
-
-                        <div class="card mt-3">
-                            <div class="card-body">
-                                <h6 class="card-title mb-2">Chuyển Token tới ví khác</h6>
-                                <div class="mb-2">
-                                    <label class="form-label small">Địa chỉ nhận</label>
-                                    <input id="transfer-address" type="text" class="form-control font-monospace" placeholder="0x... hoặc địa chỉ HScoin khác">
-                                </div>
-                                <div class="mb-2">
-                                    <label class="form-label small">Số lượng Token</label>
-                                    <input id="transfer-amount" type="number" class="form-control" placeholder="Số lượng Token">
-                                </div>
-                                <div class="d-grid">
-                                    <button class="btn btn-primary" onclick="apiTransfer()" {% if not has_wallet %}disabled{% endif %}><i class="bi bi-send me-1"></i> Gửi Token</button>
-                                </div>
-                                <div class="mt-2 small text-muted">Lưu ý: kiểm tra kỹ địa chỉ trước khi gửi.</div>
+                    
+                    <!-- PROMINENT TRANSFER BLOCK -->
+                    <div class="card mt-3 p-3 shadow-sm">
+                        <h6 class="mb-2">Chuyển Token tới ví khác</h6>
+                        <div class="row g-2 align-items-center">
+                            <div class="col-12 mb-2">
+                                <input id="transfer-address" type="text" class="form-control font-monospace" placeholder="Địa chỉ nhận 0x...">
+                            </div>
+                            <div class="col-8">
+                                <input id="transfer-amount" type="number" class="form-control" placeholder="Số lượng Token">
+                            </div>
+                            <div class="col-4 d-grid">
+                                <button id="transferBtn" class="btn btn-primary" onclick="apiTransfer()" {% if not has_wallet %}disabled{% endif %}>
+                                    <i class="bi bi-send me-1"></i>Gửi Token
+                                </button>
                             </div>
                         </div>
+                        <div class="mt-2 small text-muted">Lưu ý: kiểm tra kỹ địa chỉ trước khi gửi. Giao dịch sẽ dùng private key đã liên kết.</div>
                     </div>
-
                     {% if not has_wallet %}
-                        <div id="wallet-connect-section" class="text-center py-4">
-                            <i class="bi bi-shield-lock display-1 text-muted mb-3"></i>
-                            <p>Nhập Private Key để hệ thống thực hiện giao dịch tự động.</p>
-                            <button class="btn btn-dark" data-bs-toggle="modal" data-bs-target="#linkWalletModal">
-                                <i class="bi bi-key me-2"></i>Liên kết Ví ngay
-                            </button>
-                        </div>
-                    {% else %}
-                        <div class="alert alert-success small mb-0">
-                            <i class="bi bi-check-circle me-1"></i>Đã liên kết ví thành công.
-                        </div>
-                        <form method="POST" action="{% url 'accounts:unlink_wallet' %}" class="mt-3">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-sm btn-outline-danger w-100">Hủy liên kết ví</button>
-                        </form>
+                        <p class="text-danger mt-2 small">*Vui lòng liên kết ví bên phải để nạp/rút</p>
                     {% endif %}
                 </div>
             </div>
         </div>
 
         <div class="col-lg-6">
-            <div class="card shadow-sm h-100">
-                <div class="card-header bg-light">
-                    <h6 class="mb-0">Lịch sử giao dịch</h6>
+            <div class="card shadow-sm h-100 border-warning">
+                <div class="card-header bg-warning text-dark">
+                    <h5 class="mb-0"><i class="bi bi-link-45deg me-2"></i>Ví Blockchain (HSCoin)</h5>
                 </div>
                 <div class="card-body">
-                    <p class="small text-muted">Danh sách giao dịch gần đây sẽ hiển thị ở đây (sẽ bổ sung sau).</p>
-                    <div class="placeholder-glow">
-                        <span class="placeholder col-12 mb-2"></span>
-                        <span class="placeholder col-10 mb-2"></span>
-                        <span class="placeholder col-8 mb-2"></span>
+                    
+                    {% if not has_wallet %}
+                    <div id="wallet-connect-section" class="text-center py-4">
+                        <i class="bi bi-shield-lock display-1 text-muted mb-3"></i>
+                        <p>Liên kết địa chỉ ví và Private Key để thực hiện giao dịch.</p>
+                        <button class="btn btn-dark btn-lg rounded-btn" data-bs-toggle="modal" data-bs-target="#linkWalletModal">
+                            <i class="bi bi-key me-2"></i>Liên kết Ví
+                        </button>
                     </div>
+
+                    {% else %}
+                    <div id="wallet-info-section">
+                        <div class="mb-3">
+                            <label class="form-label text-muted small fw-bold">ĐỊA CHỈ VÍ CỦA BẠN</label>
+                            <div class="input-group">
+                                <input type="text" class="form-control font-monospace" value="{{ wallet_address }}" readonly>
+                                <button class="btn btn-outline-secondary" onclick="copyAddress('{{ wallet_address }}')">
+                                    <i class="bi bi-clipboard"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="row text-center mb-3">
+                            <div class="col-12 border-end">
+                                <small class="text-muted">TOKEN TRÊN BLOCKCHAIN (STK)</small>
+                                <h4 class="fw-bold text-warning" id="token-balance">Đang tải...</h4>
+                            </div>
+                        </div>
+                        <div class="alert alert-success small mb-0 rounded-card">
+                            <i class="bi bi-check-circle me-1"></i>Đã liên kết ví thành công.
+                        </div>
+                        
+                        <form method="POST" action="{% url 'accounts:unlink_wallet' %}" class="mt-3" onsubmit="return confirm('Bạn có chắc muốn hủy liên kết?');">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-sm btn-outline-danger w-100 rounded-btn">
+                                <i class="bi bi-x-circle me-1"></i>Hủy liên kết ví
+                            </button>
+                        </form>
+                    </div>
+                    
+                    <!-- Transaction history -->
+                    <div class="card mt-3">
+                        <div class="card-header bg-light small fw-bold">Lịch sử giao dịch</div>
+                        <div class="card-body">
+                            {% if transactions and transactions|length > 0 %}
+                                <ul class="list-group list-group-flush">
+                                {% for tx in transactions|slice:":10" %}
+                                    <li class="list-group-item small">
+                                        <div class="d-flex justify-content-between">
+                                            <div>
+                                                <strong>{{ tx.type|capfirst }}</strong> — {{ tx.note }}
+                                                <div class="text-muted small">{{ tx.currency }} • {{ tx.amount }}</div>
+                                                {% if tx.counterparty %}
+                                                    <div class="text-muted small">Đến: <span class="font-monospace">{{ tx.counterparty }}</span></div>
+                                                {% endif %}
+                                            </div>
+                                            <div class="text-end small text-muted">{{ tx.ts }}</div>
+                                        </div>
+                                    </li>
+                                {% endfor %}
+                                </ul>
+                                {% if transactions|length > 10 %}
+                                    <div class="mt-2 small text-muted">Hiển thị 10 giao dịch gần nhất.</div>
+                                {% endif %}
+                            {% else %}
+                                <div class="small text-muted">Chưa có giao dịch nào.</div>
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
+
                 </div>
             </div>
         </div>
@@ -98,33 +141,58 @@
 
 <div class="modal fade" id="linkWalletModal" tabindex="-1">
     <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
+        <div class="modal-content rounded-card">
+            <div class="modal-header bg-custom-dark text-white rounded-card-header">
                 <h5 class="modal-title">Liên kết Ví HSCoin</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
 
-            <div class="modal-footer">
-                <button type="button" class="btn btn-primary" onclick="submitLinkWallet()">Tự động Liên kết</button>
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="manual-address" class="form-label fw-bold">Địa chỉ ví (Wallet Address)</label>
+                    <input type="text" class="form-control rounded-input" id="manual-address" placeholder="0x..." required>
+                    <div class="form-text">Địa chỉ ví bắt đầu bằng 0x</div>
+                </div>
+                <div class="mb-3">
+                    <label for="manual-pk" class="form-label fw-bold">Private Key</label>
+                    <div class="input-group">
+                        <input type="password" class="form-control rounded-input" id="manual-pk" placeholder="Nhập Private Key của bạn" required>
+                        <button class="btn btn-outline-secondary" type="button" onclick="togglePkVisibility()">
+                            <i class="bi bi-eye" id="toggle-pk-icon"></i>
+                        </button>
+                    </div>
+                    <div class="form-text text-danger">
+                        <i class="bi bi-exclamation-triangle"></i> Private Key sẽ được mã hóa khi lưu trữ.
+                    </div>
+                </div>
+            </div>
+
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-secondary rounded-btn" data-bs-dismiss="modal">Đóng</button>
+                <button type="button" class="btn btn-primary rounded-btn" onclick="submitManualLink()">
+                    <i class="bi bi-link-45deg me-1"></i>Xác nhận Liên kết
+                </button>
             </div>
         </div>
     </div>
 </div>
 
-
 <div class="modal fade" id="depositModal" tabindex="-1">
     <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Nạp Coin (Đổi Token lấy Coin)</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+        <div class="modal-content rounded-card">
+            <div class="modal-header bg-success text-white rounded-card-header">
+                <h5 class="modal-title">Nạp Coin</h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p>Hệ thống sẽ tự động trừ Token trong ví Blockchain của bạn.</p>
-                <input type="number" id="deposit-amount" class="form-control" placeholder="Số lượng Token muốn nạp">
+                <p>Đổi <strong>Token (Blockchain)</strong> thành <strong>Coin (Nội bộ)</strong>.</p>
+                <div class="mb-3">
+                    <label class="form-label">Số lượng Token muốn nạp:</label>
+                    <input type="number" id="deposit-amount" class="form-control rounded-input" placeholder="Ví dụ: 10">
+                </div>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-success" onclick="apiAction('deposit')">Xác nhận Nạp</button>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-success rounded-btn" onclick="apiAction('deposit')">Xác nhận Nạp</button>
             </div>
         </div>
     </div>
@@ -132,18 +200,21 @@
 
 <div class="modal fade" id="withdrawModal" tabindex="-1">
     <div class="modal-dialog">
-        <div class="modal-content">
-            <div class="modal-header">
-                <h5 class="modal-title">Rút Coin (Đổi Coin lấy Token)</h5>
+        <div class="modal-content rounded-card">
+            <div class="modal-header bg-warning text-dark rounded-card-header">
+                <h5 class="modal-title">Rút Coin</h5>
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <p>Admin sẽ gửi Token vào ví Blockchain của bạn.</p>
-                <input type="number" id="withdraw-amount" class="form-control" placeholder="Số lượng Coin muốn rút">
-                <small>Số dư khả dụng: {{ user_coins|default:"0" }}</small>
+                <p>Đổi <strong>Coin (Nội bộ)</strong> thành <strong>Token (Blockchain)</strong>.</p>
+                <div class="mb-3">
+                    <label class="form-label">Số lượng Coin muốn rút:</label>
+                    <input type="number" id="withdraw-amount" class="form-control rounded-input" placeholder="Ví dụ: 10">
+                </div>
+                <small class="text-muted">Số dư khả dụng: {{ user_coins|default:"0" }}</small>
             </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-warning" onclick="apiAction('withdraw')">Xác nhận Rút</button>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-warning rounded-btn" onclick="apiAction('withdraw')">Xác nhận Rút</button>
             </div>
         </div>
     </div>
@@ -153,37 +224,42 @@
 
 {% block script %}
 <script>
-    // Token CSRF cho Django
     const csrftoken = '{{ csrf_token }}';
 
-async function submitLinkWallet() {
+    // 1. HÀM LIÊN KẾT VÍ THỦ CÔNG (MANUAL)
+    async function submitManualLink() {
+        const addressInput = document.getElementById('manual-address');
+        const pkInput = document.getElementById('manual-pk');
+        
+        const address = addressInput.value.trim();
+        const privateKey = pkInput.value.trim();
+
+        if (!address || !privateKey) {
+            alert("Vui lòng nhập đầy đủ Địa chỉ ví và Private Key!");
+            return;
+        }
+
         // UI Loading
         const btn = document.querySelector('#linkWalletModal .btn-primary');
-        const oldText = btn.innerText;
-        btn.innerText = "Đang kết nối HScoin...";
+        const oldText = btn.innerHTML;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang xử lý...';
         btn.disabled = true;
 
         try {
-            // ✅ Gọi về Django server của mình — dùng csrftoken và gửi cookie phiên
-            const res = await fetch("{% url 'accounts:api_auto_create_wallet' %}", {
+            // Gọi API lưu ví vào DB (Cần backend hỗ trợ endpoint này)
+            // Lưu ý: Bạn cần đảm bảo endpoint accounts:api_link_wallet đã được bật trong urls.py
+            const res = await fetch("{% url 'accounts:api_link_wallet' %}", { 
                 method: "POST",
                 headers: { 
                     "Content-Type": "application/json", 
                     "X-CSRFToken": csrftoken
                 },
                 credentials: 'same-origin',
-                body: JSON.stringify({}) // Body rỗng
+                body: JSON.stringify({ 
+                    address: address,
+                    private_key: privateKey 
+                })
             });
-
-            const contentType = res.headers.get('content-type') || '';
-            if (!res.ok) {
-                const text = await res.text();
-                throw new Error(`Server Error ${res.status}: ${text.substring(0,200)}`);
-            }
-            if (!contentType.includes('application/json')) {
-                const text = await res.text();
-                throw new Error(`Expected JSON but got HTML/text: ${text.substring(0,200)}`);
-            }
 
             const data = await res.json();
 
@@ -196,16 +272,29 @@ async function submitLinkWallet() {
 
         } catch (e) { 
             console.error(e);
-            // In lỗi chi tiết ra alert để dễ debug
             alert("Lỗi kết nối: " + e.message); 
         } finally {
-            btn.innerText = oldText;
+            btn.innerHTML = oldText;
             btn.disabled = false;
         }
     }
 
-    // 2. HÀM GỌI API NẠP / RÚT CHUNG
-    // 2. HÀM GỌI API NẠP / RÚT CHUNG (SỬA LỖI)
+    // Toggle hiện/ẩn Private Key
+    function togglePkVisibility() {
+        const pkInput = document.getElementById('manual-pk');
+        const icon = document.getElementById('toggle-pk-icon');
+        if (pkInput.type === "password") {
+            pkInput.type = "text";
+            icon.classList.remove('bi-eye');
+            icon.classList.add('bi-eye-slash');
+        } else {
+            pkInput.type = "password";
+            icon.classList.remove('bi-eye-slash');
+            icon.classList.add('bi-eye');
+        }
+    }
+
+    // 2. HÀM GỌI API NẠP / RÚT (Giữ nguyên logic cũ)
     async function apiAction(type) {
         let inputId, url, btnSelector;
 
@@ -222,7 +311,6 @@ async function submitLinkWallet() {
         const amount = document.getElementById(inputId).value;
         if (!amount || amount <= 0) return alert("Số lượng không hợp lệ");
 
-        // UI Loading
         const btn = document.querySelector(btnSelector);
         const oldText = btn.innerText;
         btn.innerText = "Đang xử lý...";
@@ -235,21 +323,6 @@ async function submitLinkWallet() {
                 credentials: 'same-origin',
                 body: JSON.stringify({ amount: amount })
             });
-
-            // Kiểm tra Content-Type trả về
-            const contentType = res.headers.get("content-type");
-            if (!contentType || !contentType.includes("application/json")) {
-                // Nếu không phải JSON, tức là server trả về HTML lỗi hoặc trang Login
-                const text = await res.text();
-                console.error("Server returned non-JSON:", text);
-                
-                if (text.includes("login") || text.includes("Đăng nhập")) {
-                    alert("Phiên đăng nhập hết hạn. Vui lòng F5 và đăng nhập lại.");
-                } else {
-                    alert("Lỗi Server (500): Vui lòng kiểm tra Terminal Django để biết chi tiết.");
-                }
-                return; // Dừng hàm
-            }
 
             const data = await res.json();
             
@@ -269,12 +342,17 @@ async function submitLinkWallet() {
             }
         }
     }
-    // 2b. Gửi token tới địa chỉ khác
+
+    // 2b. GỬI TOKEN TỚI ĐỊA CHỈ KHÁC (TRANSFER)
     async function apiTransfer() {
         const addr = document.getElementById('transfer-address').value.trim();
         const amount = document.getElementById('transfer-amount').value;
-        if (!addr) return alert('Nhập địa chỉ nhận');
+        if (!addr) return alert('Vui lòng nhập địa chỉ nhận');
         if (!amount || amount <= 0) return alert('Số lượng không hợp lệ');
+
+        const btn = document.getElementById('transferBtn');
+        const oldText = btn ? btn.innerHTML : null;
+        if (btn) { btn.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Đang gửi...'; btn.disabled = true; }
 
         try {
             const res = await fetch("{% url 'accounts:api_transfer_p2p' %}", {
@@ -284,54 +362,44 @@ async function submitLinkWallet() {
                 body: JSON.stringify({ receiver_address: addr, amount: amount })
             });
 
-            const contentType = res.headers.get('content-type') || '';
-            if (!res.ok) {
-                const text = await res.text();
-                console.error('apiTransfer error response:', res.status, text.substring(0,400));
-                return alert('Lỗi server: ' + res.status + '. Vui lòng thử lại hoặc đăng nhập lại.');
-            }
-
-            if (!contentType.includes('application/json')) {
-                const text = await res.text();
-                console.error('apiTransfer non-json response:', text.substring(0,400));
-                return alert('Phản hồi không hợp lệ từ server. Có thể bạn đã bị đăng xuất. Vui lòng đăng nhập lại.');
-            }
-
             const data = await res.json();
-            if (data.success) { alert('Giao dịch thành công: ' + data.message); location.reload(); } else { alert('Thất bại: ' + data.message); }
-        } catch (e) { console.error(e); alert('Lỗi kết nối server: ' + e.message); }
+            if (data.success) {
+                alert('✅ ' + data.message);
+                location.reload();
+            } else {
+                alert('❌ Thất bại: ' + data.message);
+            }
+        } catch (e) { console.error(e); alert('Lỗi kết nối: ' + e.message); }
+        finally { if (btn) { btn.innerHTML = oldText; btn.disabled = false; } }
     }
 
-    // 3. HÀM LOAD SỐ DƯ TOKEN TỪ BACKEND
-    // (Vì trình duyệt không kết nối trực tiếp blockchain, ta phải hỏi server)
+    // 3. HÀM LOAD SỐ DƯ TOKEN
     async function loadTokenBalance() {
-        // Chỉ chạy nếu đã liên kết ví
         const balanceElem = document.getElementById('token-balance');
         if (!balanceElem) return;
 
         try {
-            // Bạn cần tạo thêm 1 api nhỏ: api_get_balance để backend query hscoin trả về số dư
             const res = await fetch("{% url 'accounts:api_get_balance' %}", { credentials: 'same-origin' }); 
             const data = await res.json();
             if (data.success) {
-                balanceElem.innerText = data.balance + " STK";
+                // Hiển thị tối đa 4 số thập phân cho gọn
+                const balance = parseFloat(data.balance);
+                balanceElem.innerText = balance.toLocaleString('en-US', {maximumFractionDigits: 4}) + " STK";
             } else {
-                balanceElem.innerText = "Lỗi tải";
+                balanceElem.innerText = "0 STK"; // Hoặc hiển thị lỗi nếu cần
             }
         } catch (e) {
             console.log("Chưa load được balance");
         }
     }
 
-    // Chạy khi load trang
     document.addEventListener("DOMContentLoaded", function() {
         loadTokenBalance();
     });
 
     function copyAddress(text) {
         navigator.clipboard.writeText(text);
-        alert("Đã copy: " + text);
+        alert("Đã copy địa chỉ ví: " + text);
     }
-
 </script>
 {% endblock %}
