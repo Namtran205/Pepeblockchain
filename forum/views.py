@@ -1,4 +1,3 @@
-
 import os
 import uuid
 import json
@@ -16,6 +15,76 @@ from django.shortcuts import render, redirect
 import accounts.sql
 from . import sql
 
+# new helper: find a relation field name on model_cls that relates to target_model
+def _get_relation_field_name(model_cls, target_model):
+	# Look for OneToOneField / ForeignKey that points to target_model
+	for f in model_cls._meta.get_fields():
+		# f.related_model available on Django relation fields
+		if getattr(f, 'related_model', None) is target_model:
+			return f.name
+	return None
+
+# helper to try creating a related object using a few candidate relation keys
+def _create_with_relation(model_cls, target_instance, extra_kwargs=None):
+	"""
+	Try to create an instance of model_cls linked to target_instance.
+	Tries: detected relation field name, '<target>','<target>_id', then 'id' (pk).
+	Returns created instance or raises the last exception.
+	"""
+	extra_kwargs = dict(extra_kwargs or {})
+	target_model = target_instance.__class__
+	# 1) detected relation field
+	rel_field = _get_relation_field_name(model_cls, target_model)
+	last_exc = None
+	if rel_field:
+		try:
+			kwargs = dict(extra_kwargs)
+			kwargs[rel_field] = target_instance
+			return model_cls.objects.create(**kwargs)
+		except Exception as e:
+			last_exc = e
+
+	# 2) try common candidate names
+	candidate = target_model.__name__.lower()
+	for key, use_id in ((candidate, False), (candidate + '_id', True), ('id', True)):
+		try:
+			kwargs = dict(extra_kwargs)
+			kwargs[key] = (getattr(target_instance, 'id') if use_id else target_instance)
+			return model_cls.objects.create(**kwargs)
+		except Exception as e:
+			last_exc = e
+			continue
+
+	# If all attempts failed, raise last exception for debugging
+	if last_exc:
+		raise last_exc
+	# fallback safety (shouldn't reach)
+	return model_cls.objects.create(**extra_kwargs)
+
+# new helpers: read metadata directly from auxiliary tables to avoid ORM reverse-field issues
+def _get_mcq_meta(question_id):
+    """Return dict with keys 'correct_option_id' and 'randomize_options' or None."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT correct_option_id, randomize_options FROM multiple_choice_questions WHERE id = ?", [question_id])
+            row = cursor.fetchone()
+        if row:
+            return {'correct_option_id': row[0], 'randomize_options': bool(row[1])}
+    except Exception:
+        return None
+    return None
+
+def _get_essay_meta(question_id):
+    """Return dict with key 'word_limit' or None."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT word_limit FROM essay_questions WHERE id = ?", [question_id])
+            row = cursor.fetchone()
+        if row:
+            return {'word_limit': row[0]}
+    except Exception:
+        return None
+    return None
 
 def index(request):
     return render(request, 'forum/index.html', {
@@ -295,7 +364,7 @@ def edit_post(request, post_id):
                     pass
             
             # Lưu file mới
-            unique_name = f"{uuid.uuid4()} {attachment.name}"
+            unique_name = f"{uuid.uuid4()}"
             upload_path = os.path.join('posts', unique_name)
             full_path = os.path.join(settings.MEDIA_ROOT, upload_path)
             os.makedirs(os.path.dirname(full_path), exist_ok=True)
@@ -667,10 +736,12 @@ def create_test(request, subject_id):
                             messages.warning(request, f'Câu hỏi "{q.content[:50]}..." không có đáp án đúng hợp lệ')
                             q.delete()
                             continue
-                        MultipleChoiceQuestion.objects.create(id=q, correct_option=correct_option, randomize_options=bool(question.get('randomize_options', False)))
-
+                        # create MultipleChoiceQuestion linking to Question safely
+                        _create_with_relation(MultipleChoiceQuestion, q, {'correct_option': correct_option, 'randomize_options': bool(question.get('randomize_options', False))})
+ 
                     elif question.get('type') == 'essay':
-                        EssayQuestion.objects.create(id=q, word_limit=int(question.get('word_limit', 0) or 0))
+                        # create EssayQuestion linking to Question safely
+                        _create_with_relation(EssayQuestion, q, {'word_limit': int(question.get('word_limit', 0) or 0)})
                     question_obj = q
                 else:
                     # existing question id
@@ -701,6 +772,14 @@ def test_detail(request, test_id):
 
     now = timezone.now()
     is_active = (t.ends_at is None) or (t.ends_at > now)
+
+    # Normalize max_attempts: keep None to mean "unlimited", otherwise ensure an int
+    raw_max_attempts = getattr(t, 'max_attempts', None)
+    try:
+        max_attempts_val = int(raw_max_attempts) if raw_max_attempts is not None else None
+    except (ValueError, TypeError):
+        max_attempts_val = None
+
     test = {
         'id': t.id,
         'title': t.title,
@@ -708,7 +787,8 @@ def test_detail(request, test_id):
         'time_limit': t.time_limit,
         'ends_at': t.ends_at,
         'created_at': t.created_at,
-        'max_attempts': getattr(t, 'max_attempts', None),
+        # max_attempts_val is either int or None (None => unlimited)
+        'max_attempts': max_attempts_val,
         'subject_id': t.subject.id if t.subject else None,
         'author_id': t.author.id if t.author else None,
         'is_active': is_active
@@ -720,9 +800,14 @@ def test_detail(request, test_id):
     else:
         current_user_attempts = 0
 
-    # Tính toán remaining attempts
-    remaining_attempts = test['max_attempts'] - current_user_attempts
-    progress_percent = (current_user_attempts / test['max_attempts'] * 100) if test['max_attempts'] > 0 else 0
+    # Tính toán remaining attempts & progress an toàn khi max_attempts có thể là None
+    if max_attempts_val is None:
+        remaining_attempts = None   # None => không giới hạn
+        progress_percent = 0
+    else:
+        # ensure non-negative remaining attempts
+        remaining_attempts = max(0, int(max_attempts_val) - int(current_user_attempts))
+        progress_percent = int((current_user_attempts / max_attempts_val) * 100) if max_attempts_val > 0 else 0
 
     context = {
         'test': test,
@@ -785,75 +870,80 @@ def create_question(request, subject_id):
         attachment_path = upload_path
     
     # Create question via ORM
+    try:
+        from accounts.models import User
+        author = None
         try:
-            from accounts.models import User
+            author = User.objects.get(pk=user_id)
+        except Exception:
             author = None
-            try:
-                author = User.objects.get(pk=user_id)
-            except Exception:
-                author = None
 
+        subject = None
+        try:
+            subject = Subject.objects.get(pk=subject_id)
+        except Exception:
             subject = None
+
+        q = Question.objects.create(content=content, attachment_path=attachment_path, subject=subject, author=author)
+
+        if question_type == 'multiple_choice':
+            options_json = request.POST.get('options_data')
+            if not options_json:
+                messages.error(request, 'Vui lòng thêm đáp án')
+                q.delete()
+                return redirect('forum:create_question', subject_id=subject_id)
             try:
-                subject = Subject.objects.get(pk=subject_id)
+                options_data = json.loads(options_json)
             except Exception:
-                subject = None
+                messages.error(request, 'Dữ liệu đáp án không hợp lệ')
+                q.delete()
+                return redirect('forum:create_question', subject_id=subject_id)
 
-            q = Question.objects.create(content=content, attachment_path=attachment_path, subject=subject, author=author)
+            if len(options_data) < 2:
+                messages.error(request, 'Phải có ít nhất 2 đáp án')
+                q.delete()
+                return redirect('forum:create_question', subject_id=subject_id)
 
-            if question_type == 'multiple_choice':
-                options_json = request.POST.get('options_data')
-                if not options_json:
-                    messages.error(request, 'Vui lòng thêm đáp án')
-                    q.delete()
-                    return redirect('forum:create_question', subject_id=subject_id)
-                try:
-                    options_data = json.loads(options_json)
-                except Exception:
-                    messages.error(request, 'Dữ liệu đáp án không hợp lệ')
-                    q.delete()
-                    return redirect('forum:create_question', subject_id=subject_id)
+            correct_index = int(request.POST.get('correct_answer_index', -1))
+            if correct_index < 0 or correct_index >= len(options_data):
+                messages.error(request, 'Vui lòng chọn đáp án đúng')
+                q.delete()
+                return redirect('forum:create_question', subject_id=subject_id)
 
-                if len(options_data) < 2:
-                    messages.error(request, 'Phải có ít nhất 2 đáp án')
-                    q.delete()
-                    return redirect('forum:create_question', subject_id=subject_id)
+            correct_option = None
+            for idx, option_text in enumerate(options_data):
+                if not option_text.strip():
+                    continue
+                opt = MultipleChoiceOption.objects.create(content=option_text.strip(), question=q)
+                if idx == correct_index:
+                    correct_option = opt
 
-                correct_index = int(request.POST.get('correct_answer_index', -1))
-                if correct_index < 0 or correct_index >= len(options_data):
-                    messages.error(request, 'Vui lòng chọn đáp án đúng')
-                    q.delete()
-                    return redirect('forum:create_question', subject_id=subject_id)
+            if not correct_option:
+                messages.error(request, 'Đáp án đúng không hợp lệ')
+                q.delete()
+                return redirect('forum:create_question', subject_id=subject_id)
 
-                correct_option = None
-                for idx, option_text in enumerate(options_data):
-                    if not option_text.strip():
-                        continue
-                    opt = MultipleChoiceOption.objects.create(content=option_text.strip(), question=q)
-                    if idx == correct_index:
-                        correct_option = opt
+            # create MultipleChoiceQuestion for newly created Question safely
+            _create_with_relation(MultipleChoiceQuestion, q, {'correct_option': correct_option, 'randomize_options': bool(request.POST.get('randomize_options'))})
 
-                if not correct_option:
-                    messages.error(request, 'Đáp án đúng không hợp lệ')
-                    q.delete()
-                    return redirect('forum:create_question', subject_id=subject_id)
-
-                MultipleChoiceQuestion.objects.create(id=q, correct_option=correct_option, randomize_options=bool(request.POST.get('randomize_options')))
-
-            elif question_type == 'essay':
+        elif question_type == 'essay':
+            # ensure word_limit is defined
+            try:
                 word_limit = int(request.POST.get('word_limit', 0))
-                EssayQuestion.objects.create(id=q, word_limit=word_limit)
+            except (ValueError, TypeError):
+                word_limit = 0
+            _create_with_relation(EssayQuestion, q, {'word_limit': word_limit})
 
-            messages.success(request, 'Tạo câu hỏi thành công')
-            return redirect('forum:question_bank', subject_id=subject_id)
-        except Exception as e:
-            if attachment_path:
-                try:
-                    os.remove(full_path)
-                except:
-                    pass
-            messages.error(request, f'Có lỗi xảy ra: {str(e)}')
-            return redirect('forum:create_question', subject_id=subject_id)
+        messages.success(request, 'Tạo câu hỏi thành công')
+        return redirect('forum:question_bank', subject_id=subject_id)
+    except Exception as e:
+        if attachment_path:
+            try:
+                os.remove(full_path)
+            except:
+                pass
+        messages.error(request, f'Có lỗi xảy ra: {str(e)}')
+        return redirect('forum:create_question', subject_id=subject_id)
 
 
 def take_test(request, test_id):
@@ -891,68 +981,107 @@ def take_test(request, test_id):
         messages.error(request, f'Có lỗi xảy ra: {str(e)}')
         return redirect('forum:index')
 
-
 def handle_test_submission(request, test_id, user_id, attempt_count):
     """Xử lý nộp bài - chấm tự động trắc nghiệm"""
     try:
+        # Lấy thời gian làm bài từ POST request
         time_spent = int(request.POST.get('time_spent', 0))
-        submission = Submission.objects.create(test_id=test_id, author_id=user_id, attempt_number=attempt_count + 1, time_spent=time_spent)
 
-        # iterate test questions
-        tqs = TestQuestion.objects.filter(test_id=test_id).select_related('question').order_by('question_order')
-        for tq in tqs:
-            q = tq.question
+        # Tạo đối tượng Submission mới
+        submission = Submission.objects.create(
+            test_id=test_id,
+            author_id=user_id,
+            attempt_number=attempt_count + 1,
+            time_spent=time_spent
+        )
+
+        # Lấy danh sách các câu hỏi của bài test, với thông tin order
+        tq_rows = list(TestQuestion.objects.filter(test_id=test_id).order_by('question_order').values_list('question_id', 'question_order'))
+        question_ids = [qid for qid, _ in tq_rows if qid is not None]
+
+        # Lấy tất cả câu hỏi có id trong question_ids
+        questions = Question.objects.filter(id__in=question_ids)
+        questions_map = {q.id: q for q in questions}  # Chuyển đổi danh sách câu hỏi thành dictionary để tra cứu nhanh
+
+        # Lặp qua tất cả câu hỏi
+        for qid, _order in tq_rows:
+            q = questions_map.get(qid)  # Lấy câu hỏi từ map
+            if not q:
+                continue
             user_answer = request.POST.get(f'answer_{q.id}', '').strip()
-            if isinstance(q, Question) and user_answer:
-                if hasattr(q, 'multiplechoicequestion'):
-                    try:
-                        selected_option_id = int(user_answer)
-                    except ValueError:
-                        selected_option_id = None
-                    if selected_option_id:
-                        ans = Answer.objects.create(submission=submission, question=q)
-                        MultipleChoiceAnswer.objects.create(id=ans, selected_option_id=selected_option_id)
-                elif hasattr(q, 'essayquestion'):
-                    ans = Answer.objects.create(submission=submission, question=q)
-                    EssayAnswer.objects.create(id=ans, content=user_answer, is_corrected=None)
+            if not user_answer:
+                continue
 
+            # Use SQL-backed helpers to determine type
+            mcq_meta = _get_mcq_meta(q.id)
+            if mcq_meta:
+                try:
+                    selected_option_id = int(user_answer)
+                except (ValueError, TypeError):
+                    selected_option_id = None
+                if selected_option_id:
+                    ans = Answer.objects.create(submission=submission, question=q)
+                    _create_with_relation(MultipleChoiceAnswer, ans, {'selected_option_id': selected_option_id})
+                continue
+
+            eq_meta = _get_essay_meta(q.id)
+            if eq_meta:
+                ans = Answer.objects.create(submission=submission, question=q)
+                _create_with_relation(EssayAnswer, ans, {'content': user_answer, 'is_corrected': None})
+                continue
+ 		
+ 	# Gửi thông báo thành công và chuyển hướng đến trang chi tiết submission
         messages.success(request, 'Nộp bài thành công!')
         return redirect('forum:submission_detail', submission_id=submission.id)
+
     except Exception as e:
+        # Nếu có lỗi xảy ra, gửi thông báo lỗi và chuyển hướng đến trang làm bài
         messages.error(request, f'Có lỗi xảy ra: {str(e)}')
         return redirect('forum:take_test', test_id=test_id)
 
-
 def display_test(request, test_id, user_id, attempt_count, test_info):
     """Hiển thị bài kiểm tra"""
-    # Use ORM to gather questions and types
-    tqs = TestQuestion.objects.filter(test_id=test_id).select_related('question').order_by('question_order')
+    # Load TestQuestion rows (only question_id/question_order) and bulk-load related Question objects
+    tq_rows = list(TestQuestion.objects.filter(test_id=test_id).order_by('question_order').values_list('question_id', 'question_order'))
+    question_ids = [qid for qid, _ in tq_rows if qid is not None]
+    questions_qs = Question.objects.filter(id__in=question_ids)
+    questions_map = {q.id: q for q in questions_qs}
+
     questions = []
-    for tq in tqs:
-        q = tq.question
-        question_type = 'unknown'
-        randomize_options = False
-        word_limit = 0
-        if hasattr(q, 'multiplechoicequestion'):
+    for qid, _order in tq_rows:
+        q = questions_map.get(qid)
+        if not q:
+            continue
+
+        mcq_meta = _get_mcq_meta(q.id)
+        eq_meta = _get_essay_meta(q.id)
+
+        if mcq_meta:
             question_type = 'multiple_choice'
-            randomize_options = getattr(q.multiplechoicequestion, 'randomize_options', False)
-        elif hasattr(q, 'essayquestion'):
+            randomize_options = bool(mcq_meta.get('randomize_options', False))
+            word_limit = 0
+        elif eq_meta:
             question_type = 'essay'
-            word_limit = getattr(q.essayquestion, 'word_limit', 0)
+            randomize_options = False
+            word_limit = int(eq_meta.get('word_limit', 0) or 0)
+        else:
+            question_type = 'unknown'
+            randomize_options = False
+            word_limit = 0
 
         question_data = {
-            'id': q.id,
-            'content': q.content,
-            'type': question_type,
-            'options': {},
-            'randomize_options': randomize_options,
-            'word_limit': word_limit
-        }
+             'id': q.id,
+             'content': q.content,
+             'type': question_type,
+             'options': {},
+             'randomize_options': randomize_options,
+             'word_limit': word_limit
+         }
 
         if question_type == 'multiple_choice':
             opts = list(MultipleChoiceOption.objects.filter(question_id=q.id).order_by('id'))
             option_list = [{'id': o.id, 'content': o.content} for o in opts]
-            if question_data['randomize_options']:
+            if randomize_options:
                 import random
                 random.shuffle(option_list)
             options = {}
@@ -962,7 +1091,7 @@ def display_test(request, test_id, user_id, attempt_count, test_info):
             question_data['options'] = options
 
         questions.append(question_data)
-    
+     
     context = {
         'test': test_info,
         'test_id': test_id,
@@ -984,26 +1113,19 @@ def question_bank(request, subject_id):
     qs = Question.objects.filter(subject_id=subject_id).order_by('-created_at')
     questions = []
     for qobj in qs:
-        # determine type
-        try:
-            mcq = MultipleChoiceQuestion.objects.filter(id=qobj.id).first()
-        except Exception:
-            mcq = None
-        try:
-            eq = EssayQuestion.objects.filter(id=qobj.id).first()
-        except Exception:
-            eq = None
-
-        if mcq:
+        # determine type using SQL-backed helpers instead of ORM reverse-access
+        mcq_meta = _get_mcq_meta(qobj.id)
+        eq_meta = _get_essay_meta(qobj.id)
+        if mcq_meta:
             qtype = 'multiple_choice'
-            correct_option_id = mcq.correct_option.id if getattr(mcq, 'correct_option', None) else None
-            randomize = mcq.randomize_options
+            correct_option_id = mcq_meta.get('correct_option_id')
+            randomize = mcq_meta.get('randomize_options', False)
             word_limit = 0
-        elif eq:
+        elif eq_meta:
             qtype = 'essay'
             correct_option_id = None
             randomize = 0
-            word_limit = eq.word_limit
+            word_limit = eq_meta.get('word_limit', 0)
         else:
             qtype = 'unknown'
             correct_option_id = None
@@ -1027,7 +1149,7 @@ def question_bank(request, subject_id):
             options = {}
             for idx, opt in enumerate(opts):
                 label = chr(65 + idx)
-                options[label] = {'id': opt.id, 'content': opt.content, 'is_correct': opt.id == correct_option_id}
+                options[label] = {'id': opt.id, 'content': opt.content, 'is_correct': (opt.id == correct_option_id)}
             question_data['options'] = options
 
         questions.append(question_data)
@@ -1061,7 +1183,7 @@ def add_questions_to_test(request, test_id):
         return redirect('forum:test_detail', test_id=test_id)
 
     # questions not yet in test
-    existing_q_ids = [q.question_id for q in TestQuestion.objects.filter(test_id=test_id)]
+    existing_q_ids = list(TestQuestion.objects.filter(test_id=test_id).values_list('question_id', flat=True))
     qs = Question.objects.filter(subject_id=subject_id).exclude(id__in=existing_q_ids).order_by('-created_at')
     available_questions = []
     for qobj in qs:

@@ -18,6 +18,7 @@ def subject_tests(subject_id):
             'time_limit': t.time_limit,
             'ends_at': t.ends_at,
             'created_at': t.created_at,
+            # Use getattr to avoid AttributeError when Test has no max_attempts field
             'max_attempts': getattr(t, 'max_attempts', None),
             'is_active': (t.ends_at is None) or (t.ends_at > now)
         }
