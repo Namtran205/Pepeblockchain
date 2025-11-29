@@ -48,6 +48,7 @@ def encode_input_data(function_name, args):
 def call_hscoin(caller, function_name, args, private_key=None):
     try:
         hex_input = encode_input_data(function_name, args)
+        print("Hex-iput: ",hex_input)
     except Exception as e:
         logger.error(f"Encoding error: {e}")
         return False, str(e)
@@ -109,16 +110,18 @@ def admin_mint_tokens(receiver_address, amount):
 
 
 
-from decimal import Decimal
+from decimal import Decimal, getcontext
 
 def user_burn_tokens(user_address, amount, private_key=None):
+
     pk = private_key or settings.ADMIN_PRIVATE_KEY
     bal = hscoin_get_balance(user_address)
+    print("Balance:", bal, "Amount to send:", amount)
     print("Balance token:", bal, "Amount to send:", amount)
 
     amount_wei = int(Decimal(amount) * Decimal(1e18))
-    if amount_wei > int(Decimal(bal) * Decimal(1e18)):
-        return False, "Insufficient balance"
+    # if amount_wei > int(Decimal(bal) * Decimal(1e18)):
+    #     return False, "Insufficient balance"
 
     return call_hscoin(user_address, "burn", [amount_wei], pk)
 
@@ -128,36 +131,86 @@ def user_transfer_tokens(sender_address, receiver_address, amount, private_key=N
     print("Balance token:", bal, "Amount to send:", amount)
 
     amount_wei = int(Decimal(amount) * Decimal(1e18))
-    if amount_wei > int(Decimal(bal) * Decimal(1e18)):
-        return False, "Insufficient balance"
+    # if amount_wei > int(Decimal(bal) * Decimal(1e18)):
+    #     return False, "Insufficient balance"
 
     return call_hscoin(sender_address, "transfer", [receiver_address, amount_wei], pk)
 
 
 
 # --- Get balance safely ---
+# Cấu hình logging để debug nếu cần
+logger = logging.getLogger(__name__)
+
+# Đặt độ chính xác cho Decimal
+getcontext().prec = 50 
+
 def hscoin_get_balance(user_address):
     caller = getattr(settings, 'ADMIN_WALLET_ADDRESS', user_address)
     try:
         hex_input = encode_input_data("balanceOf", [user_address])
-        payload = {"caller": caller, "contractAddress": settings.TOKEN_CONTRACT_ADDRESS, "value":0, "inputData":hex_input}
+        print(hex_input)
+        payload = {
+            "caller": caller, 
+            "contractAddress": settings.TOKEN_CONTRACT_ADDRESS, 
+            "value": 0, 
+            "inputData": hex_input
+        }
+        
         res = requests.post(HSCOIN_ENDPOINT, json=payload, headers=HEADERS, timeout=60)
-        if res.status_code != 200: return 0.0
+        
+        if res.status_code != 200: return 0
         data = res.json()
-        if data.get("success") is False or "error" in data: return 0.0
-        val = data.get("decodedOutput") or data.get("result") or data.get("output") or data.get("data")
-        if isinstance(val, dict): val = list(val.values())[0]
-        if isinstance(val, list) and val: val = val[0]
-        if isinstance(val, str) and val.startswith("0x"):
-            if len(val)!=66: return 0.0
-            int_val = int(val,16)
-        else:
-            int_val = int(val)
-        return int_val/1e18
+        print("Response data:", data)
+        if data.get("success") is False or "error" in data: return 0
+
+        # ... (Phần tìm val giữ nguyên như câu trả lời trước) ...
+        # 1. Tìm giá trị ở cấp cao nhất
+        val = data.get("decodedOutput") or data.get("result") or data.get("output")
+
+        # 2. Tìm sâu trong 'data'
+        if val is None:
+            inner_data = data.get("data")
+            if isinstance(inner_data, dict):
+                val = inner_data.get("decodedOutput") or inner_data.get("output") or inner_data.get("result") or inner_data.get("returnData")
+            elif isinstance(inner_data, (str, int)):
+                val = inner_data
+
+        # 3. Check lại lần nữa nếu vẫn là dict
+        if isinstance(val, dict):
+             val = val.get("output") or val.get("decodedOutput") or val.get("result")
+
+        # ---------------------------------------------------------
+        # PHẦN SỬA LỖI QUAN TRỌNG TẠI ĐÂY
+        # ---------------------------------------------------------
+        int_val = 0
+        if isinstance(val, str):
+            val = val.strip()
+            
+            # Trường hợp đặc biệt: "0x" nghĩa là 0
+            if val == "0x": 
+                int_val = 0
+            elif val.startswith("0x"):
+                # Chỉ convert nếu có ký tự sau 0x
+                try:
+                    int_val = int(val, 16)
+                except ValueError:
+                    int_val = 0
+            else:
+                try:
+                    int_val = int(val)
+                except ValueError:
+                    int_val = 0
+        elif isinstance(val, int):
+            int_val = val
+            
+        balance = Decimal(int_val) / Decimal(10 ** 18)
+        print("Balance fetched:", balance)
+        return float(balance)
+
     except Exception as e:
         logger.error(f"Get balance error: {e}")
-        return 0.0
-
+        return 0
 
 # --- Wallet & transaction logs ---
 def hscoin_create_new_wallet():

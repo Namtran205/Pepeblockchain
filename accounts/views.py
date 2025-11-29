@@ -506,7 +506,9 @@ def api_deposit(request):
                 bal = hscoin_get_balance(user_address)
             except Exception:
                 bal = 0.0
+            print(result)
             return JsonResponse({'success': True, 'message': f'Nạp thành công! Hash: {result}', 'balance': bal})
+            
         else:
             return JsonResponse({'success': False, 'message': f'Lỗi Blockchain: {result}'})
 
@@ -545,6 +547,7 @@ def api_withdraw(request):
             cursor.execute("UPDATE users SET coins = coins - %s WHERE id = %s", [amount, user_id])
 
         # Admin Mint
+        print("Withdrawing", amount, "for user", user_id, "to address", user_address)
         success, result = admin_mint_tokens(user_address, amount)
 
         if success:
@@ -562,8 +565,10 @@ def api_withdraw(request):
                 pass
             try:
                 bal = hscoin_get_balance(user_address)
+                print("Balance after withdraw:", bal)
             except Exception:
                 bal = 0.0
+            print(result)
             return JsonResponse({'success': True, 'message': f'Rút thành công! Hash: {result}', 'balance': bal})
         else:
             # Hoàn tiền
@@ -625,6 +630,7 @@ def api_transfer_p2p(request):
                 bal = hscoin_get_balance(sender_addr)
             except Exception:
                 bal = 0.0
+            print(result)
             return JsonResponse({'success': True, 'message': f'Chuyển thành công: {result}', 'balance': bal})
         else:
             return JsonResponse({'success': False, 'message': result})

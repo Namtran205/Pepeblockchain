@@ -373,25 +373,32 @@
         finally { if (btn) { btn.innerHTML = oldText; btn.disabled = false; } }
     }
 
-    // 3. HÀM LOAD SỐ DƯ TOKEN
-    async function loadTokenBalance() {
-        const balanceElem = document.getElementById('token-balance');
-        if (!balanceElem) return;
+// 3. HÀM LOAD SỐ DƯ TOKEN
+async function loadTokenBalance() {
+    const balanceElem = document.getElementById('token-balance');
+    if (!balanceElem) return;
 
-        try {
-            const res = await fetch("{% url 'accounts:api_get_balance' %}", { credentials: 'same-origin' }); 
-            const data = await res.json();
-            if (data.success) {
-                // Hiển thị tối đa 4 số thập phân cho gọn
-                const balance = parseFloat(data.balance);
-                balanceElem.innerText = balance.toLocaleString('en-US', {maximumFractionDigits: 4}) + " STK";
-            } else {
-                balanceElem.innerText = "0 STK"; // Hoặc hiển thị lỗi nếu cần
-            }
-        } catch (e) {
-            console.log("Chưa load được balance");
+    try {
+        const res = await fetch("{% url 'accounts:api_get_balance' %}", { credentials: 'same-origin' }); 
+        const data = await res.json();
+        
+        if (data.success) {
+            // Dữ liệu từ backend giờ đã là số thực (ví dụ: 5.0, 10.5)
+            const balance = parseFloat(data.balance);
+            console.log("Balance:", balance); 
+            // Format số: tối đa 4 số lẻ, ví dụ: 5.1234 STK
+            balanceElem.innerText = balance.toLocaleString('en-US', {
+                minimumFractionDigits: 0,
+                maximumFractionDigits: 4
+            }) + " STK";
+        } else {
+            balanceElem.innerText = "0 STK";
         }
+    } catch (e) {
+        console.log("Chưa load được balance", e);
+        balanceElem.innerText = "Error";
     }
+}
 
     document.addEventListener("DOMContentLoaded", function() {
         loadTokenBalance();

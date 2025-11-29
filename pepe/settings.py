@@ -149,7 +149,7 @@ HSCOIN_API_KEY="30ee8479531340b497f4069ec873a498"
 # CHAIN_ID = 1337 # Thay bằng Chain ID mạng của bạn (thường 1337 hoặc xem trên web)
 
 # Smart Contract Address (SimpleToken)
-HSCOIN_SIMPLE_TOKEN_ADDRESS=0x773d5787b8afcfd11aa04fdd73b792da4134ffce
+# HSCOIN_SIMPLE_TOKEN_ADDRESS=0x773d5787b8afcfd11aa04fdd73b792da4134ffce
 
 # Danh sách ví được phép gọi contract
 HSCOIN_ALLOWED_CALLERS=0xc839fb60d86b9838f5772c33dc1f77c67fd809e7,0x693d7eeac22122406e49df7a84a23382fa272748
@@ -157,7 +157,7 @@ HSCOIN_ALLOWED_CALLERS=0xc839fb60d86b9838f5772c33dc1f77c67fd809e7,0x693d7eeac221
 ADMIN_WALLET_ADDRESS = "0xc839fb60d86b9838f5772c33dc1f77c67fd809e7" 
 ADMIN_PRIVATE_KEY = "0dc35a6279ce936b5e123e028ac6ea8c715d68ca8a5aee2bfc8ac61b2d1b17d8"
 
-TOKEN_CONTRACT_ADDRESS = "0x8bb7cad9df48bfced29c8b696482a3d5b5670283"
+TOKEN_CONTRACT_ADDRESS = "0x0d8f66bde8444f174cd2be9c5f7b9b8fc81507ee"
 # WARNING: When True, private keys will be stored in the DB as plaintext.
 # This is insecure. Only enable if you accept the risks.
 # For normal operation we store keys encrypted; set to True only if you
