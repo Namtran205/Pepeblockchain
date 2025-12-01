@@ -184,3 +184,5 @@ if not FERNET_KEY:
     else:
         # BẮT BUỘC: Trong môi trường Production (DEBUG=False), phải có khóa
         raise EnvironmentError("LỖI BẢO MẬT: Biến môi trường 'PEPE_CRYPTO_KEY' chưa được đặt. Hệ thống không thể chạy an toàn.")
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY', 'AIzaSyBYM2Di02c5hKxM8jAeyoNB36fR_8DIfDM')
