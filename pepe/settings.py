@@ -157,7 +157,7 @@ HSCOIN_ALLOWED_CALLERS=0xc839fb60d86b9838f5772c33dc1f77c67fd809e7,0x693d7eeac221
 ADMIN_WALLET_ADDRESS = "0xc839fb60d86b9838f5772c33dc1f77c67fd809e7" 
 ADMIN_PRIVATE_KEY = os.environ.get("PEPE_ADMIN_PK")
 
-TOKEN_CONTRACT_ADDRESS = "0x25878fecdcb0a47187404ea6f1ddee9a4f455fff"
+TOKEN_CONTRACT_ADDRESS = "0x74a0c4d7b2d0d581d8671c0810ee657541a8a227"
 # WARNING: When True, private keys will be stored in the DB as plaintext.
 # This is insecure. Only enable if you accept the risks.
 # For normal operation we store keys encrypted; set to True only if you
