@@ -155,11 +155,32 @@ HSCOIN_API_KEY="30ee8479531340b497f4069ec873a498"
 HSCOIN_ALLOWED_CALLERS=0xc839fb60d86b9838f5772c33dc1f77c67fd809e7,0x693d7eeac22122406e49df7a84a23382fa272748
 # VÍ 1 (ADMIN) - Dùng để Mint token cho user
 ADMIN_WALLET_ADDRESS = "0xc839fb60d86b9838f5772c33dc1f77c67fd809e7" 
-ADMIN_PRIVATE_KEY = "0dc35a6279ce936b5e123e028ac6ea8c715d68ca8a5aee2bfc8ac61b2d1b17d8"
+ADMIN_PRIVATE_KEY = os.environ.get("PEPE_ADMIN_PK")
 
-TOKEN_CONTRACT_ADDRESS = "0x0d8f66bde8444f174cd2be9c5f7b9b8fc81507ee"
+TOKEN_CONTRACT_ADDRESS = "0x25878fecdcb0a47187404ea6f1ddee9a4f455fff"
 # WARNING: When True, private keys will be stored in the DB as plaintext.
 # This is insecure. Only enable if you accept the risks.
 # For normal operation we store keys encrypted; set to True only if you
 # explicitly want plaintext storage.
 STORE_PRIVATE_KEYS_PLAINTEXT = False
+
+
+# --- CẤU HÌNH KHÓA MÃ HÓA VÍ (FERNET KEY) ---
+# Đọc khóa mã hóa từ biến môi trường PEPE_CRYPTO_KEY.
+# Khóa này phải là một chuỗi Base64 (ví dụ: 'k9sRzR7eW3Q-G2oXy5KxJ8vVl_aB0I2N-pA4tZ0cM0s=')
+
+# python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# $env:PEPE_CRYPTO_KEY="UTKkSuqLi4myBkud0dmzM-pVXh7v-KbSzoSjmHVJ6CY="
+# $env:PEPE_ADMIN_PK="[0dc35a6279ce936b5e123e028ac6ea8c715d68ca8a5aee2bfc8ac61b2d1b17d8]"
+# python manage.py runserver
+
+FERNET_KEY = os.environ.get("PEPE_CRYPTO_KEY")
+
+if not FERNET_KEY:
+    if DEBUG:
+        # Tùy chọn: Trong môi trường DEV, sử dụng khóa mặc định và in cảnh báo
+        print("CẢNH BÁO BẢO MẬT: Đang sử dụng khóa Fernet mặc định cho môi trường DEBUG. KHÔNG SỬ DỤNG CHO PRODUCTION!")
+        FERNET_KEY = "8sTj6H-4k_5qL9oR2pZ1xV3mN7bA0cE8wY5dF2gH4jK=" # Dùng lại giá trị FIXED_KEY cũ
+    else:
+        # BẮT BUỘC: Trong môi trường Production (DEBUG=False), phải có khóa
+        raise EnvironmentError("LỖI BẢO MẬT: Biến môi trường 'PEPE_CRYPTO_KEY' chưa được đặt. Hệ thống không thể chạy an toàn.")

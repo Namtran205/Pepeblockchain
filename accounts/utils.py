@@ -145,11 +145,13 @@ logger = logging.getLogger(__name__)
 # Đặt độ chính xác cho Decimal
 getcontext().prec = 50 
 
-def hscoin_get_balance(user_address):
-    caller = getattr(settings, 'ADMIN_WALLET_ADDRESS', user_address)
+def hscoin_get_balance(user_address): 
+    # caller = getattr(settings, 'ADMIN_WALLET_ADDRESS', user_address)
+    caller="0x693d7eeac22122406e49df7a84a23382fa272748"
+    print(f" Caller: {caller}")
     try:
-        hex_input = encode_input_data("balanceOf", [user_address])
-        print(hex_input)
+        hex_input = encode_input_data("getBalance", [user_address])
+        print("Hex-input for balanceOf:", hex_input)
         payload = {
             "caller": caller, 
             "contractAddress": settings.TOKEN_CONTRACT_ADDRESS, 
